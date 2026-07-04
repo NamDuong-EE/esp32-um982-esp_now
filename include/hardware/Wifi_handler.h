@@ -8,5 +8,7 @@
 // ================= HÀM CẤU HÌNH WI-FI =================
 
 bool setupWiFi();
+bool configureWiFiForEspNowLongRange();
+uint8_t getWiFiChannel();
 
 #endif

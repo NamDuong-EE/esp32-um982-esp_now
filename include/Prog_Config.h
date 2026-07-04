@@ -1,70 +1,25 @@
 #ifndef PROG_CONFIG_H
 #define PROG_CONFIG_H
 
+#include <cstddef>
 #include <cstdint>
+
 #include "Top_Lvl_Config.h"
 
-// ================= CẤU HÌNH CHÂN CẮM VÀ TỐC ĐỘ SERIAL =================
-inline constexpr int RX_GNSS = 41; // Nối TXD (Hàng dưới) của UM980
-inline constexpr int TX_GNSS = 42; // Nối RXD (Hàng dưới) của UM980
-inline constexpr int GNSS_BAUD = 115200;
-inline constexpr int LED_PIN = 35;
+// ================= UART UM980/UM982 =================
+// ESP32-WROOM-32U/ESP32U defaults. Change these two pins to match the PCB.
+inline constexpr int RX_GNSS = 16; // UM980 TX -> ESP32 RX
+inline constexpr int TX_GNSS = 17; // UM980 RX -> ESP32 TX
+inline constexpr uint32_t GNSS_BAUD = 115200;
+inline constexpr int LED_PIN = 2;
 
-// ================= CẤU HÌNH CÁC TASK =================
-inline constexpr int MUTEX_TIMEOUT_MS = 1500; // Thời gian tối đa để chờ mutex (ms)
+// ================= TASKS =================
+inline constexpr uint32_t MUTEX_TIMEOUT_MS = 1500;
+inline constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
 
-// ================= CẤU HÌNH KẾT NỐI =================
-#if CONNECT_USING_WIFI
+// ================= WI-FI / MQTT =================
 inline constexpr char WIFI_SSID[] = "AITOGY";
 inline constexpr char WIFI_PASSWORD[] = "aitogy@aitogy";
-#endif
-
-#if CONNECT_USING_4G
-inline constexpr uint8_t TX_TO_MODEM_RX = 16;
-inline constexpr uint8_t RX_TO_MODEM_TX = 17;
-inline constexpr uint8_t MODEM_DC_PIN = 15;
-inline constexpr uint8_t MODEM_DTR_PIN = 4;
-
-inline constexpr char APN[] = "v-internet"; // Thay bằng APN của nhà mạng bạn
-inline constexpr char GPRS_USER[] = "";     // Thường để trống
-inline constexpr char GPRS_PASS[] = "";
-#endif
-
-// ================ CẤU HÌNH LORA =================
-#if NMEA_COMMUNICATION_PROTOCOL == LORA_SERIAL
-inline constexpr int RF_FREQUENCY = 433000000; // Hz
-// inline constexpr int TX_OUTPUT_POWER = 5;        // dBm
-inline constexpr int LORA_BANDWIDTH = 0;         // [0: 125 kHz,
-                                                              //  1: 250 kHz,
-                                                              //  2: 500 kHz,
-                                                              //  3: Reserved]
-inline constexpr int LORA_SPREADING_FACTOR = 11;         // [SF7..SF12]
-inline constexpr int LORA_CODINGRATE = 1;         // [1: 4/5,
-                                                              //  2: 4/6,
-                                                              //  3: 4/7,
-                                                              //  4: 4/8]
-inline constexpr int LORA_PREAMBLE_LENGTH = 8;         // Same for Tx and Rx
-inline constexpr int LORA_SYMBOL_TIMEOUT = 0;         // Symbols
-inline constexpr bool LORA_FIX_LENGTH_PAYLOAD_ON = false;
-inline constexpr bool LORA_IQ_INVERSION_ON = false;
-inline constexpr int LORA_TX_TIMEOUT = 3000;         // ms
-#endif
-
-// ================= CẤU HÌNH NTRIP =================
-inline constexpr int NTRIP_MODE = 3; // 1: Chỉ gửi GGA khi có yêu cầu; 2: Gửi GGA mỗi khi có thay đổi; 3: Gửi GGA đều đặn mỗi 10s
-
-#if NMEA_COMMUNICATION_PROTOCOL == TCP_IP
-inline constexpr char NTRIP_CASTER_IP[] = "aitogy.com.vn";
-inline constexpr uint16_t NTRIP_CASTER_PORT = 2101;
-#elif NMEA_COMMUNICATION_PROTOCOL == LORA_SERIAL
-#define NTRIP_LORA_SERIAL_CONFIG
-#endif
-
-inline constexpr char NTRIP_MOUNTPOINT[] = "/humga";
-// Base64 của "trung:12345"
-inline constexpr char NTRIP_AUTH[] = "dHJ1bmc6MTIzNDU=";
-
-// ================ CẤU HÌNH MQTT =================
 
 inline constexpr char MQTT_SERVER[] = "aitogy.asia";
 inline constexpr uint16_t MQTT_PORT = 1883;
@@ -78,7 +33,38 @@ inline constexpr char TOPIC_PUB_RAW_GGA[] = "tdm2402/um980/raw/gga";
 inline constexpr char TOPIC_PUB_RAW_KSXT[] = "tdm2402/um980/raw/ksxt";
 inline constexpr char TOPIC_PUB_HEALTH[] = "tdm2402/um980/health";
 
-// ================= CẤU HÌNH KIỂM TRA SỨC KHOẺ =================
-const unsigned long HEALTH_INTERVAL = 30000; // chu kỳ gửi thông tin sức khoẻ (ms)
+// ================= ESP-NOW =================
+// Provision the STA MAC of the Base before deployment. An all-zero MAC is rejected.
+inline constexpr uint8_t ESPNOW_BASE_MAC[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+inline constexpr std::size_t ESPNOW_QUEUE_LENGTH = 16;
+inline constexpr uint32_t RTCM_REASSEMBLY_TIMEOUT_MS = 500;
+inline constexpr bool ESPNOW_USE_LR_250KBPS = true;
 
-#endif // PROG_CONFIG_H
+// Enable only after replacing both keys on Base and Rover with the same provisioned values.
+inline constexpr bool ESPNOW_ENCRYPTION_ENABLED = false;
+inline constexpr uint8_t ESPNOW_PMK[16] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+inline constexpr uint8_t ESPNOW_LMK[16] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+inline constexpr bool espnowBaseMacIsConfigured() {
+    return ESPNOW_BASE_MAC[0] != 0 || ESPNOW_BASE_MAC[1] != 0 ||
+           ESPNOW_BASE_MAC[2] != 0 || ESPNOW_BASE_MAC[3] != 0 ||
+           ESPNOW_BASE_MAC[4] != 0 || ESPNOW_BASE_MAC[5] != 0;
+}
+
+inline constexpr bool espnowSecurityKeysAreConfigured() {
+    bool pmkConfigured = false;
+    bool lmkConfigured = false;
+    for (std::size_t index = 0; index < sizeof(ESPNOW_PMK); ++index) {
+        pmkConfigured = pmkConfigured || ESPNOW_PMK[index] != 0;
+        lmkConfigured = lmkConfigured || ESPNOW_LMK[index] != 0;
+    }
+    return pmkConfigured && lmkConfigured;
+}
+
+#endif

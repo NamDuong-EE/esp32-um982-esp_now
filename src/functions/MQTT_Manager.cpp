@@ -1,6 +1,9 @@
 #include "functions/MQTT_Manager.h"
 #include "Top_Lvl_Config.h"
 #include "Prog_Config.h"
+#include <freertos/semphr.h>
+
+extern SemaphoreHandle_t gnssTxMutex;
 
 // ================= ĐỊNH NGHĨA CÁC ĐỐI TƯỢNG CẦN CHO KẾT NỐI =================
 #if CONNECT_USING_WIFI
@@ -23,9 +26,15 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("\n[MQTT DOWNLINK] Lenh: ");
   Serial.println(cmd);
   
-  // Đẩy lệnh xuống UM980 qua Serial1
-  Serial1.print(cmd);
-  Serial1.print("\r\n");
+  // Đẩy lệnh xuống UM980, dùng chung mutex với luồng RTCM nhị phân.
+  cmd += "\r\n";
+  if (gnssTxMutex != nullptr &&
+      xSemaphoreTake(gnssTxMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+    Serial1.write(reinterpret_cast<const uint8_t*>(cmd.c_str()), cmd.length());
+    xSemaphoreGive(gnssTxMutex);
+  } else {
+    Serial.println("[MQTT DOWNLINK][ERROR] Khong khoa duoc UART GNSS");
+  }
 }
 
 int setupMQTT() {

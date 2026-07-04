@@ -28,7 +28,7 @@ int publishGGA(String &nmeaBuffer)
     // Bắt dòng tọa độ
     if (nmeaBuffer.startsWith("$GNGGA") || nmeaBuffer.startsWith("$GPGGA") || nmeaBuffer.startsWith("$KSXT"))
     {
-        // Cập nhật tọa độ mới nhất để NTRIP dùng xác thực (Mode 3)
+        // Cập nhật tọa độ mới nhất để health check đánh giá dữ liệu GNSS.
         latestGGA = nmeaBuffer;
 
         // Đẩy lên MQTT
@@ -82,32 +82,30 @@ String formDeviceHealthString()
     unsigned long uptime_s = millis() / 1000;
     uint32_t freeHeap = ESP.getFreeHeap();
 
-#if CONNECT_USING_WIFI
-    int32_t rssi = WiFi.RSSI();
+    int32_t rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
     String connected_via = "WiFi";
-#endif
-#if CONNECT_USING_4G
-    int32_t rssi = modem.getSignalQuality();
-    String connected_via = "GSM";
-#endif
 
     bool mqttOk = isMqttConnected();
-#if NMEA_COMMUNICATION_PROTOCOL == TCP_IP
-    bool ntripOk = isNtripConnected();
-#else
-    // Nếu dùng LoRa thì không có NTRIP qua TCP/IP, sẽ có cách khác để kiểm tra. Hiện chưa có mã nguồn cho LoRa nên tạm thời để false.
-    bool ntripOk = false;
-#endif
     bool gnssOk = (latestGGA.length() > 10); // Nếu có chuỗi NMEA hợp lệ
+    const EspNowRtcmStats espnowStats = espnowGetStats();
+    const uint32_t frameAgeMs = espnowStats.lastValidFrameMillis == 0
+                                    ? UINT32_MAX
+                                    : millis() - espnowStats.lastValidFrameMillis;
 
     // 2. Đóng gói thành JSON
-    char healthPayload[256];
+    char healthPayload[512];
     snprintf(healthPayload, sizeof(healthPayload),
-             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"rssi_dbm\":%d,\"mqtt_ok\":%s,\"ntrip_ok\":%s,\"gnss_data_ok\":%s}",
+             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"rssi_dbm\":%d,\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"gnss_data_ok\":%s,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_sequence_gaps\":%lu,\"last_rtcm_age_ms\":%lu}",
              uptime_s, freeHeap, connected_via, rssi,
              mqttOk ? "true" : "false",
-             ntripOk ? "true" : "false",
-             gnssOk ? "true" : "false");
+             espnowIsReady() ? "true" : "false",
+             espnowBaseMacIsConfigured() ? "true" : "false",
+             gnssOk ? "true" : "false",
+             static_cast<unsigned long>(espnowStats.framesWritten),
+             static_cast<unsigned long>(espnowStats.crcErrors),
+             static_cast<unsigned long>(espnowStats.queueOverflow),
+             static_cast<unsigned long>(espnowStats.sequenceGaps),
+             static_cast<unsigned long>(frameAgeMs));
     /*Xóa tọa độ sau khi đã dùng để đánh giá sức khoẻ, nếu còn giữ, 
     trong trường hợp không có dữ liệu mới, sẽ luôn báo GNSS OK dù 
     thực tế đã mất tín hiệu. Việc này giúp phản ánh tình trạng thực tế hơn.*/ 
