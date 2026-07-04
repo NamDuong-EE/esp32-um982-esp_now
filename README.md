@@ -2,13 +2,13 @@
 
 Rover dùng mạch ESP32U nhận dữ liệu hiệu chỉnh RTCM từ Base qua giao thức ESP-NOW , chuyển dữ liệu vào UM980/982/982 qua UART và gửi dữ liệu trạng thái/GNSS lên MQTT.
 
-## Phạm vi dự án
+## Mục tiêu dự án
 
 Repository này hiện tại đang tập trung xây dựng firmware cho **Rover**. Trong tương lai sẽ thêm cả phần Firmware Base.
 
 ESP32U sử dụng radio Wi-Fi tích hợp cho ESP-NOW và kết nối trực tiếp với UM980/982 bằng các chân GPIO UART.
 
-## Trạng thái triển khai
+## Tiến độ triển khai
 
 - [x] Firmware ESP32U Rover biên dịch thành công bằng PlatformIO.
 - [x] Wire protocol ESP-NOW/RTCM, chia fragment và CRC24Q đã có unit test.
