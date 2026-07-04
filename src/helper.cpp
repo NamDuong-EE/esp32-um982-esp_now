@@ -29,7 +29,11 @@ int publishGGA(String &nmeaBuffer)
     if (nmeaBuffer.startsWith("$GNGGA") || nmeaBuffer.startsWith("$GPGGA") || nmeaBuffer.startsWith("$KSXT"))
     {
         // Cập nhật tọa độ mới nhất để health check đánh giá dữ liệu GNSS.
-        latestGGA = nmeaBuffer;
+        if (xSemaphoreTake(nmeaBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE)
+        {
+            latestGGA = nmeaBuffer;
+            xSemaphoreGive(nmeaBufferMutex);
+        }
 
         // Đẩy lên MQTT
         String jsonPayload = "";
@@ -47,7 +51,7 @@ int publishGGA(String &nmeaBuffer)
             }
             publishData(jsonPayload, false);
         }
-        else if (nmeaBuffer.startsWith("$GNGGA"))
+        else if (nmeaBuffer.startsWith("$GNGGA") || nmeaBuffer.startsWith("$GPGGA"))
         {
             publishRaw(nmeaBuffer, true);
             bool parseOk = parseGGA_toStruct(nmeaBuffer, ggaData);
@@ -86,7 +90,13 @@ String formDeviceHealthString()
     String connected_via = "WiFi";
 
     bool mqttOk = isMqttConnected();
-    bool gnssOk = (latestGGA.length() > 10); // Nếu có chuỗi NMEA hợp lệ
+    bool gnssOk = false;
+    if (xSemaphoreTake(nmeaBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE)
+    {
+        gnssOk = latestGGA.length() > 10;
+        latestGGA = "";
+        xSemaphoreGive(nmeaBufferMutex);
+    }
     const EspNowRtcmStats espnowStats = espnowGetStats();
     const uint32_t frameAgeMs = espnowStats.lastValidFrameMillis == 0
                                     ? UINT32_MAX
@@ -96,7 +106,7 @@ String formDeviceHealthString()
     char healthPayload[512];
     snprintf(healthPayload, sizeof(healthPayload),
              "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"rssi_dbm\":%d,\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"gnss_data_ok\":%s,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_sequence_gaps\":%lu,\"last_rtcm_age_ms\":%lu}",
-             uptime_s, freeHeap, connected_via, rssi,
+             uptime_s, freeHeap, connected_via.c_str(), rssi,
              mqttOk ? "true" : "false",
              espnowIsReady() ? "true" : "false",
              espnowBaseMacIsConfigured() ? "true" : "false",
@@ -106,10 +116,6 @@ String formDeviceHealthString()
              static_cast<unsigned long>(espnowStats.queueOverflow),
              static_cast<unsigned long>(espnowStats.sequenceGaps),
              static_cast<unsigned long>(frameAgeMs));
-    /*Xóa tọa độ sau khi đã dùng để đánh giá sức khoẻ, nếu còn giữ, 
-    trong trường hợp không có dữ liệu mới, sẽ luôn báo GNSS OK dù 
-    thực tế đã mất tín hiệu. Việc này giúp phản ánh tình trạng thực tế hơn.*/ 
-    latestGGA = "";
     // 3. Trả về payload để có thể log hoặc dùng cho mục đích khác nếu cần
     return String(healthPayload);
 }

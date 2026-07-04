@@ -370,7 +370,7 @@ Không nên chỉ nạp riêng `.pio/build/esp32u_rover_espnow/firmware.bin` b�
 ## Kết quả kiểm tra phần mềm
 
 - PlatformIO `esp32u_rover_espnow`: **SUCCESS**.
-- RAM: 46,276 / 327,680 byte (14.1%).
-- Flash: 770,021 / 1,310,720 byte (58.7%).
+- RAM: 46,236 / 327,680 byte (14.1%).
+- Flash: 768,289 / 1,310,720 byte (58.6%).
 - Native unit test: **3/3 PASSED**.
 - Chưa đánh dấu kiểm thử phần cứng vì MAC Base, PMK/LMK và PCB thực tế chưa được cung cấp.
