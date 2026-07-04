@@ -1,28 +1,28 @@
 # ESP32 GNSS Rover
 
-Firmware Rover dùng ESP32U nhận dữ liệu hiệu chỉnh RTCM từ Base qua ESP-NOW Long Range, chuyển dữ liệu vào UM980 qua UART và gửi dữ liệu trạng thái/GNSS lên MQTT.
+Rover dùng mạch ESP32U nhận dữ liệu hiệu chỉnh RTCM từ Base qua giao thức ESP-NOW , chuyển dữ liệu vào UM980/982/982 qua UART và gửi dữ liệu trạng thái/GNSS lên MQTT.
 
 ## Phạm vi dự án
 
-Repository này chỉ xây dựng firmware cho **Rover**. Firmware Base không nằm trong repository, nhưng Base phải tuân thủ giao thức gói RTCM được mô tả bên dưới.
+Repository này hiện tại đang tập trung xây dựng firmware cho **Rover**. Trong tương lai sẽ thêm cả phần Firmware Base.
 
-Dự án không còn sử dụng phần cứng hoặc thư viện LoRa. ESP32U sử dụng radio Wi-Fi tích hợp cho ESP-NOW và kết nối trực tiếp với UM980 bằng các chân GPIO UART.
+ESP32U sử dụng radio Wi-Fi tích hợp cho ESP-NOW và kết nối trực tiếp với UM980/982 bằng các chân GPIO UART.
 
 ## Trạng thái triển khai
 
 - [x] Firmware ESP32U Rover biên dịch thành công bằng PlatformIO.
 - [x] Wire protocol ESP-NOW/RTCM, chia fragment và CRC24Q đã có unit test.
 - [x] Wi-Fi STA, MQTT, ESP-NOW LR, peer unicast, FreeRTOS Queue và reassembly đã được cài đặt.
-- [x] Chỉ frame RTCM hoàn chỉnh, đúng CRC mới được ghi nhị phân vào UART UM980.
+- [x] Chỉ frame RTCM hoàn chỉnh, đúng CRC mới được ghi nhị phân vào UART UM980/982.
 - [x] Health counter và xử lý reconnect Wi-Fi/refresh ESP-NOW peer đã được thêm.
 - [x] Source, dependency, environment, board definition và test LoRa/Heltec đã được loại bỏ.
 - [ ] Xác nhận GPIO16/17 đúng với PCB ESP32U thực tế.
 - [ ] Điền MAC STA của Base vào `ESPNOW_BASE_MAC` trong `include/Prog_Config.h`.
 - [ ] Provision PMK/LMK và bật `ESPNOW_ENCRYPTION_ENABLED` khi triển khai bảo mật.
-- [ ] Kiểm thử end-to-end trên Base + ESP32U Rover + UM980 + MQTT.
+- [ ] Kiểm thử end-to-end trên Base + ESP32U Rover + UM980/982 + MQTT.
 
 ```text
-Base ── ESP-NOW Long Range ──> ESP32U Rover ── UART GPIO ──> UM980
+Base ── ESP-NOW Long Range ──> ESP32U Rover ── UART GPIO ──> UM980/982
                                       │
                                       └── Wi-Fi ──> MQTT
 ```
@@ -33,13 +33,13 @@ Base ── ESP-NOW Long Range ──> ESP32U Rover ── UART GPIO ──> UM9
 
 - Rover chạy `WIFI_STA`.
 - Cùng interface STA được dùng cho kết nối router/MQTT và ESP-NOW.
-- Wi-Fi thông thường dùng `WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N`.
-- ESP-NOW giữa Base và Rover dùng thêm `WIFI_PROTOCOL_LR`.
-- Cấu hình đầy đủ của STA là `11B/G/N | LR`, không dùng chế độ LR-only vì router thông thường không hỗ trợ giao thức LR độc quyền của Espressif.
+- Wi-Fi dùng các giao thức `WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N`.
+- Base và Rover giao tiếp thông qua esp-now ở chế độ `WIFI_PROTOCOL_LR`.
+- Cấu hình đầy đủ của STA là `11B/G/N | LR`, không dùng chế độ LR-only vì router thông thường không hỗ trợ giao thức LR.
 - Router, Rover và Base phải dùng cùng một kênh Wi-Fi 2.4 GHz. Router phải được cấu hình kênh cố định, không để Auto Channel.
 - Rover kết nối router trước, đọc channel hiện tại rồi mới khởi tạo ESP-NOW.
 - PHY rate ESP-NOW mặc định là LR 250 Kbps để ưu tiên tầm xa. Có thể thử LR 500 Kbps sau khi đo thực địa.
-- Trong lúc STA scan hoặc reconnect Wi-Fi, ESP-NOW có thể mất gói. Firmware phải ghi nhận lỗi và không chuyển frame RTCM thiếu dữ liệu vào UM980.
+- Trong lúc STA scan hoặc reconnect Wi-Fi, ESP-NOW có thể mất gói. Firmware phải ghi nhận lỗi và không chuyển frame RTCM thiếu dữ liệu vào UM980/982.
 
 Luồng khởi tạo dự kiến:
 
@@ -61,25 +61,25 @@ Khởi chạy MQTT và các task ứng dụng
 
 - Dữ liệu RTCM được gửi bằng unicast tới MAC cố định của Rover.
 - Rover chỉ chấp nhận packet từ MAC Base đã cấu hình.
-- Phiên bản đầu dùng MAC cấu hình tĩnh; chưa triển khai broadcast discovery.
+- trong phiên bản thử nghiệm sẽ dùng MAC cấu hình tĩnh; chưa triển khai broadcast discovery.
 - Khi bật mã hóa, Base và Rover dùng chung PMK/LMK được provision trước.
-- `ESP_NOW_SEND_SUCCESS` chỉ xác nhận ở tầng MAC, không đảm bảo task ứng dụng đã xử lý packet.
+- `ESP_NOW_SEND_SUCCESS` chỉ xác nhận ở tầng MAC - Data Link layer, không đảm bảo task ứng dụng đã xử lý packet.
 
-### Kết nối ESP32U với UM980
+### Kết nối ESP32U với UM980/982
 
-- UM980 TX nối với GPIO RX UART của ESP32U.
-- UM980 RX nối với GPIO TX UART của ESP32U.
+- UM980/982 TX nối với GPIO RX UART của ESP32U.
+- UM980/982 RX nối với GPIO TX UART của ESP32U.
 - Hai thiết bị phải nối chung GND và dùng mức logic tương thích 3.3 V.
-- GPIO RX/TX được khai báo trong `include/Prog_Config.h`; không phụ thuộc vào chân LoRa cũ.
+- Cấu hình GPIO RX/TX được khai báo trong `include/Prog_Config.h`.
 - UART GNSS mặc định chạy ở 115200 baud, cấu hình `SERIAL_8N1`.
 - Dữ liệu RTCM là dữ liệu nhị phân: phải dùng `Serial1.write(data, length)`, không dùng `print()`, `println()` hoặc chuỗi kết thúc bằng `\0`.
-- Mọi log debug chỉ được ghi ra `Serial` USB, tuyệt đối không ghi vào `Serial1` nối với UM980.
+- Mọi log debug chỉ được ghi ra `Serial` USB, tuyệt đối không ghi vào `Serial1` nối với UM980/982.
 
 ## Giao thức chia gói RTCM qua ESP-NOW
 
 ### Nguyên tắc
 
-- ESP-NOW v1 được chọn làm mức tương thích cơ sở, tối đa 250 byte mỗi packet.
+- ESP-NOW v1 được chọn làm mức tương thích cơ sở, tối đa 250 bytes mỗi packet.
 - Một RTCM3 frame có tối đa 1023 byte payload, cộng 3 byte header và 3 byte CRC24Q, tổng cộng tối đa 1029 byte.
 - Base phải tách đúng từng RTCM3 frame trước khi chia fragment. Không trộn byte của hai RTCM frame trong cùng một nhóm fragment.
 - Header giao thức có kích thước 16 byte; phần dữ liệu tối đa là 234 byte.
@@ -174,8 +174,8 @@ Không gửi ACK ứng dụng cho từng fragment trong phiên bản đầu. Uni
 - Queue đề xuất chứa tối thiểu 16 packet để hấp thụ các burst RTCM.
 - Mỗi packet trong queue phải lưu cả header, payload và độ dài nhận thực tế.
 - Bộ đệm reassembly tối thiểu 1029 byte.
-- Khi queue đầy, drop packet mới; frame thiếu fragment sau đó phải timeout và không được chuyển xuống UM980.
-- Các counter cần theo dõi: packet nhận, packet sai nguồn, packet sai header, queue overflow, fragment trùng, frame timeout, frame mất sequence, CRC lỗi và frame đã chuyển thành công vào UM980.
+- Khi queue đầy, drop packet mới; frame thiếu fragment sau đó phải timeout và không được chuyển xuống UM980/982.
+- Các counter cần theo dõi: packet nhận, packet sai nguồn, packet sai header, queue overflow, fragment trùng, frame timeout, frame mất sequence, CRC lỗi và frame đã chuyển thành công vào UM980/982.
 
 ## Source đã triển khai
 
@@ -188,7 +188,7 @@ Không gửi ACK ứng dụng cho từng fragment trong phiên bản đầu. Uni
 | ✅ | `include/hardware/Espnow_handler.h` | API khởi tạo ESP-NOW và receive callback |
 | ✅ | `src/hardware/Espnow_handler.cpp` | Cấu hình STA/LR, peer và đưa packet vào queue |
 | ✅ | `include/functions/Rtcm_EspNow_Handler.h` | API reassembly/validate RTCM |
-| ✅ | `src/functions/Rtcm_EspNow_Handler.cpp` | Ghép fragment, kiểm tra CRC24Q và ghi vào UM980 |
+| ✅ | `src/functions/Rtcm_EspNow_Handler.cpp` | Ghép fragment, kiểm tra CRC24Q và ghi vào UM980/982 |
 
 ### File cần sửa
 
@@ -219,15 +219,15 @@ Thư viện Heltec LoRa, macro LoRaWAN, cấu hình RF, board variant và các b
 - Máy tính đã cài Visual Studio Code và extension PlatformIO IDE, hoặc PlatformIO CLI.
 - Cáp USB có truyền dữ liệu; một số cáp chỉ cấp nguồn sẽ không tạo cổng COM.
 - Driver USB-UART phù hợp với board, thường là CP210x hoặc CH340.
-- ESP32U được nối với UM980 theo bảng dưới đây. TX và RX phải nối chéo.
+- ESP32U được nối với UM980/982 theo bảng dưới đây. TX và RX phải nối chéo.
 
-| ESP32U | UM980 | Ghi chú |
+| ESP32U | UM980/982 | Ghi chú |
 |---|---|---|
-| GPIO16 / RX | TX | UM980 gửi NMEA về ESP32U |
-| GPIO17 / TX | RX | ESP32U gửi RTCM/lệnh vào UM980 |
+| GPIO16 / RX | TX | UM980/982 gửi NMEA về ESP32U |
+| GPIO17 / TX | RX | ESP32U gửi RTCM/lệnh vào UM980/982 |
 | GND | GND | Bắt buộc chung mass |
 
-Chỉ nối các chân UART khi mức logic của UM980 tương thích 3.3 V. Cấp nguồn cho board UM980 đúng theo tài liệu phần cứng của board; không mặc định lấy nguồn trực tiếp từ chân 3.3 V của ESP32U.
+Chỉ nối các chân UART khi mức logic của UM980/982 tương thích 3.3 V. Cấp nguồn cho board UM980/982 đúng theo tài liệu phần cứng của board; không mặc định lấy nguồn trực tiếp từ chân 3.3 V của ESP32U.
 
 ### 2. Cấu hình trước khi build
 
@@ -327,7 +327,7 @@ thì phải điền MAC Base trong `Prog_Config.h`, build và upload lại.
 2. Kiểm tra Base đang gửi unicast tới MAC STA của Rover được in trên Serial Monitor.
 3. Quan sát health payload: `rtcm_frames` phải tăng và `last_rtcm_age_ms` phải được cập nhật.
 4. `rtcm_crc_errors`, `rtcm_queue_overflow` và `rtcm_sequence_gaps` lý tưởng bằng 0.
-5. Kiểm tra UM980 nhận RTCM và chuyển sang trạng thái RTK Float/Fixed.
+5. Kiểm tra UM980/982 nhận RTCM và chuyển sang trạng thái RTK Float/Fixed.
 6. Kiểm tra GGA/KSXT vẫn được publish lên MQTT.
 
 ### 7. Xử lý lỗi thường gặp
@@ -339,7 +339,7 @@ thì phải điền MAC Base trong `Prog_Config.h`, build và upload lại.
 | ESP-NOW không Ready | Điền MAC Base, kiểm tra PMK/LMK và Wi-Fi đã kết nối |
 | Có MQTT nhưng không có RTCM | Base/Rover/router phải cùng channel; kiểm tra MAC đích phía Base |
 | CRC error tăng | Kiểm tra protocol Base, `frameLength`, fragment index/count và CRC24Q |
-| UM980 không nhận correction | Kiểm tra TX/RX nối chéo, chung GND, baud và mức logic UART |
+| UM980/982 không nhận correction | Kiểm tra TX/RX nối chéo, chung GND, baud và mức logic UART |
 | Serial Monitor ký tự rác | Đặt monitor baud 115200 |
 
 Không nên chỉ nạp riêng `.pio/build/esp32u_rover_espnow/firmware.bin` bằng công cụ ngoài vì một ESP32 trống còn cần bootloader và partition table đúng địa chỉ. Upload bằng PlatformIO là phương án mặc định và an toàn nhất.
@@ -355,14 +355,14 @@ Không nên chỉ nạp riêng `.pio/build/esp32u_rover_espnow/firmware.bin` b�
 7. [x] Cài đặt reassembly, timeout, sequence tracking và CRC24Q.
 8. [x] Ghi RTCM hợp lệ vào `Serial1` bằng API nhị phân và mutex UART.
 9. [x] Thêm health counter và log debug trên `Serial`.
-10. [ ] Kiểm thử end-to-end với Base, UM980 và MQTT cùng hoạt động.
+10. [ ] Kiểm thử end-to-end với Base, UM980/982 và MQTT cùng hoạt động.
 11. [x] Xóa hoàn toàn source, dependency, environment và test LoRa.
 
 ## Tiêu chí hoàn thành
 
-- [ ] Rover nhận đúng RTCM qua ESP-NOW LR và UM980 đạt trạng thái RTK theo yêu cầu trên phần cứng.
+- [ ] Rover nhận đúng RTCM qua ESP-NOW LR và UM980/982 đạt trạng thái RTK theo yêu cầu trên phần cứng.
 - [ ] MQTT và ESP-NOW được xác nhận hoạt động đồng thời trên cùng STA/channel ngoài thực địa.
-- [x] Code không ghi log debug vào UART UM980; lệnh UM980 và RTCM dùng chung mutex TX.
+- [x] Code không ghi log debug vào UART UM980/982; lệnh UM980/982 và RTCM dùng chung mutex TX.
 - [x] Frame thiếu fragment, sai độ dài hoặc sai CRC bị loại trước khi ghi UART.
 - [x] Code xử lý `streamId` mới, timeout và refresh peer sau Wi-Fi reconnect.
 - [x] Health payload có packet/frame counter, queue overflow, sequence gap, CRC error và tuổi frame RTCM gần nhất.
