@@ -112,6 +112,15 @@ bool processNextRtcmEspNowPacket(TickType_t waitTicks) {
         return false;
     }
 
+    if (haveLastCompletedFrame && header.streamId == lastCompletedStreamId &&
+        !isNewerSequence(header.frameSequence, lastCompletedSequence)) {
+        espnowRecordDuplicateFragment();
+        if (header.frameSequence == lastCompletedSequence && header.fragmentIndex == 0) {
+            espnowSendFrameAck(header.streamId, header.frameSequence);
+        }
+        return false;
+    }
+
     if (!state.active) {
         startFrame(header);
     } else if (header.streamId != state.streamId) {
@@ -136,6 +145,9 @@ bool processNextRtcmEspNowPacket(TickType_t waitTicks) {
     const uint8_t fragmentMask = static_cast<uint8_t>(1U << header.fragmentIndex);
     if ((state.fragmentBitmap & fragmentMask) != 0) {
         espnowRecordDuplicateFragment();
+        if (header.fragmentIndex == 0) {
+            state.startedAt = millis();
+        }
         return false;
     }
 
@@ -166,5 +178,6 @@ bool processNextRtcmEspNowPacket(TickType_t waitTicks) {
     recordSequenceGap(streamId, sequence);
     espnowRecordFrameWritten();
     clearActiveFrame();
+    espnowSendFrameAck(streamId, sequence);
     return true;
 }

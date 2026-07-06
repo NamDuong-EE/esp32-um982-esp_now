@@ -103,18 +103,27 @@ String formDeviceHealthString()
                                     : millis() - espnowStats.lastValidFrameMillis;
 
     // 2. Đóng gói thành JSON
-    char healthPayload[512];
+    char healthPayload[768];
     snprintf(healthPayload, sizeof(healthPayload),
-             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"rssi_dbm\":%d,\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"gnss_data_ok\":%s,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_sequence_gaps\":%lu,\"last_rtcm_age_ms\":%lu}",
+             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"rssi_dbm\":%d,\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"gnss_data_ok\":%s,\"packets_received\":%lu,\"packets_wrong_source\":%lu,\"packets_invalid\":%lu,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_queue_hwm\":%lu,\"rtcm_duplicates\":%lu,\"rtcm_timeouts\":%lu,\"rtcm_sequence_gaps\":%lu,\"uart_write_errors\":%lu,\"ack_queued\":%lu,\"ack_send_fail\":%lu,\"last_rtcm_age_ms\":%lu}",
              uptime_s, freeHeap, connected_via.c_str(), rssi,
              mqttOk ? "true" : "false",
              espnowIsReady() ? "true" : "false",
              espnowBaseMacIsConfigured() ? "true" : "false",
              gnssOk ? "true" : "false",
+             static_cast<unsigned long>(espnowStats.packetsReceived),
+             static_cast<unsigned long>(espnowStats.packetsWrongSource),
+             static_cast<unsigned long>(espnowStats.packetsInvalidHeader),
              static_cast<unsigned long>(espnowStats.framesWritten),
              static_cast<unsigned long>(espnowStats.crcErrors),
              static_cast<unsigned long>(espnowStats.queueOverflow),
+             static_cast<unsigned long>(espnowStats.queueHighWater),
+             static_cast<unsigned long>(espnowStats.duplicateFragments),
+             static_cast<unsigned long>(espnowStats.frameTimeouts),
              static_cast<unsigned long>(espnowStats.sequenceGaps),
+             static_cast<unsigned long>(espnowStats.uartWriteErrors),
+             static_cast<unsigned long>(espnowStats.ackPacketsQueued),
+             static_cast<unsigned long>(espnowStats.ackSendFailures),
              static_cast<unsigned long>(frameAgeMs));
     // 3. Trả về payload để có thể log hoặc dùng cho mục đích khác nếu cần
     return String(healthPayload);

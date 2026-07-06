@@ -56,9 +56,15 @@ void setup() {
     Serial.println("       ESP32U GNSS ROVER KHOI DONG       ");
     Serial.println("=========================================");
 
+    if (Serial1.setTxBufferSize(GNSS_TX_BUFFER_SIZE) != GNSS_TX_BUFFER_SIZE) {
+        Serial.println("[GNSS][ERROR] Khong dat duoc UART TX buffer");
+    }
     Serial1.begin(GNSS_BAUD, SERIAL_8N1, RX_GNSS, TX_GNSS);
-    Serial.printf("[GNSS] UART1 baud=%lu RX=%d TX=%d\n",
-                  static_cast<unsigned long>(GNSS_BAUD), RX_GNSS, TX_GNSS);
+    Serial.printf("[GNSS] UART1 baud=%lu RX=%d TX=%d tx_buffer=%u\n",
+                  static_cast<unsigned long>(GNSS_BAUD),
+                  RX_GNSS,
+                  TX_GNSS,
+                  static_cast<unsigned>(GNSS_TX_BUFFER_SIZE));
 
     mqttClientMutex = createRequiredMutex("mqttClientMutex");
     nmeaBufferMutex = createRequiredMutex("nmeaBufferMutex");

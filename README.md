@@ -54,7 +54,7 @@ Serial1.write(frame, frameLength) vào UM980/982
 
 ### Kết quả review pipeline Base/Rover ngày 2026-07-06
 
-Kết luận: wire protocol của Base và Rover đang khớp về header 16 byte, payload fragment 234 byte, `streamId`, `frameSequence`, CRC24Q, channel 6 và LR 250 Kbps. Với RTCM 1 Hz, băng thông trung bình đủ; Rover đã có queue nên chịu burst tốt hơn Base. Tuy nhiên hệ thống chưa thể coi là tối ưu hoàn chỉnh cho vận hành quan trắc dài hạn.
+Kết luận sau tối ưu: wire protocol Base/Rover khớp về data header 16 byte, ACK 12 byte, payload fragment 234 byte, `streamId`, `frameSequence`, CRC24Q, channel 6 và LR 250 Kbps. Với RTCM 1 Hz, băng thông trung bình đủ; hai phía đã có buffer/queue, deadline và telemetry để phát hiện backlog.
 
 Các phần đã làm tốt:
 
@@ -64,22 +64,21 @@ Các phần đã làm tốt:
 4. Header, kích thước fragment, RTCM preamble/length và CRC24Q đều được kiểm tra trước khi ghi UART.
 5. Rover chỉ nhận đúng MAC Base đã cấu hình và dùng cùng channel/LR với Base.
 
-Các điểm cần tối ưu tiếp:
+Các tối ưu đã triển khai:
 
-1. **Timeout Base/Rover chưa đồng bộ.** Rover bỏ frame sau 500 ms tính từ fragment đầu, trong khi Base chờ callback tối đa 250 ms và có hai retry. Chỉ một fragment thất bại ba attempt có thể chiếm khoảng 765 ms; Rover có thể timeout một frame mà Base vẫn đang retry. Cần đo callback thực tế rồi đặt một send deadline chung; trong giai đoạn test có thể tăng timeout Rover, nhưng vẫn phải bỏ correction quá cũ.
-2. **Chưa có ACK ứng dụng.** Base chỉ nhận send callback mức MAC. Rover chưa gửi ACK sau khi ghép đủ, CRC đúng và `Serial1.write()` thành công, nên Base chưa biết correction đã đi hết đường dữ liệu.
-3. **`Serial1.write()` có thể chặn task reassembly.** Với TX buffer mặc định và UART 115200, frame cực đại 1029 byte cần khoảng 89 ms trên wire. Queue 16 packet hiện đủ cho tải 1 Hz thông thường, nhưng cần theo dõi queue high-water/overflow hoặc thêm TX buffer/UART writer task nếu tăng tần suất.
-4. **Reassembly chỉ giữ một frame đang ghép.** Điều này đúng với Base hiện tại vì Base gửi stop-and-wait và không xen kẽ hai frame. Nếu Base chuyển sang pipeline nhiều frame, Rover phải dùng nhiều reassembly slot.
-5. **Health JSON chưa xuất hết counter đã có.** Cần thêm `packetsReceived`, `packetsInvalidHeader`, `packetsWrongSource`, `duplicateFragments`, `frameTimeouts` và `uartWriteErrors`; hiện log chỉ có frame, CRC, queue overflow, sequence gap và tuổi frame.
-6. **Unit test mới kiểm tra protocol cơ bản.** Chưa test reassembly out-of-order, duplicate, missing fragment, timeout, đổi `streamId`, sequence wrap, queue overflow và UART write failure.
+1. Timeout reassembly tăng lên 1500 ms, lớn hơn deadline một attempt của Base là 1000 ms. Fragment 0 trùng của lần retry làm mới thời điểm bắt đầu frame.
+2. Rover gửi ACK ứng dụng theo `streamId + frameSequence` sau khi ghép đủ, CRC đúng và `Serial1.write()` nhận đủ byte.
+3. Sequence đã hoàn thành nếu được gửi lại sẽ chỉ tạo ACK mới, không ghi RTCM lần hai vào UART.
+4. UART TX buffer tăng lên 2048 byte trước `Serial1.begin()`, đủ chứa RTCM frame cực đại 1029 byte mà không giữ task reassembly trong toàn bộ thời gian phát vật lý.
+5. Health JSON đã có packet nhận/sai nguồn/sai header, queue high-water/overflow, duplicate, timeout, sequence gap, UART write error và ACK queued/fail.
+6. Unit test có thêm cấu trúc và validate ACK; tổng cộng 4 test protocol.
 
-Thứ tự triển khai đề xuất:
+Phần còn lại cần kiểm chứng:
 
-1. Đồng bộ deadline/timeout giữa Base và Rover, thêm đo thời gian từ fragment đầu tới frame hoàn chỉnh.
-2. Mở rộng health counter và queue high-water để kiểm chứng bằng phần cứng.
-3. Thêm test cho toàn bộ state machine reassembly.
-4. Thêm ACK ứng dụng theo `streamId + frameSequence` sau khi Rover ghi UART thành công.
-5. Chỉ tăng UART baud hoặc chuyển LR 500 Kbps khi số đo cho thấy tải thực chạm trần.
+1. Reassembly vẫn giữ một frame vì Base gửi tuần tự, không xen kẽ frame. Nếu Base đổi sang nhiều frame in-flight thì Rover phải có nhiều slot.
+2. Chưa có unit test đầy đủ cho state machine out-of-order, missing fragment, timeout, sequence wrap, queue overflow và UART failure.
+3. ACK xác nhận frame đã vào UART TX buffer, không xác nhận UM980/UM982 đã chuyển sang RTK Float/Fixed.
+4. Giữ UART 115200 và LR 250 Kbps cho tới khi telemetry phần cứng chứng minh cần tăng tốc.
 
 Giới hạn review: repo Rover không có log phần cứng end-to-end mới nhất, nên chưa xác nhận tỷ lệ queue overflow, latency thực, UM980/982 nhận correction và trạng thái RTK Float/Fixed.
 
@@ -112,6 +111,7 @@ Lưu ý:
 
 - Mức logic UART phải tương thích 3.3 V.
 - UART GNSS mặc định là `115200`, cấu hình `SERIAL_8N1`.
+- UART TX buffer được đặt 2048 byte trước khi mở `Serial1`.
 - RTCM là dữ liệu nhị phân, bắt buộc dùng `Serial1.write(data, length)`.
 - Không ghi log/debug vào `Serial1`; mọi log chỉ ra `Serial` USB.
 
@@ -150,6 +150,22 @@ struct RtcmEspNowHeader {
 static_assert(sizeof(RtcmEspNowHeader) == 16);
 ```
 
+ACK Rover gửi ngược về Base sau khi frame được chấp nhận vào UART:
+
+```cpp
+struct RtcmEspNowAck {
+    uint16_t magic;          // 0x5452
+    uint8_t  version;        // 1
+    uint8_t  packetType;     // 2 = FRAME_ACK
+    uint16_t streamId;
+    uint32_t frameSequence;
+    uint8_t  status;         // 1 = WRITTEN
+    uint8_t  reserved;
+};
+
+static_assert(sizeof(RtcmEspNowAck) == 12);
+```
+
 Độ dài packet gửi thực tế:
 
 ```text
@@ -184,9 +200,10 @@ Task reassembly:
 2. Lưu fragment theo `fragmentIndex`, dùng bitmap để phát hiện fragment đã có.
 3. Bỏ fragment trùng.
 4. Nếu fragment không nhất quán thì bỏ toàn bộ frame.
-5. Nếu queue tràn hoặc quá thời gian 500 ms, bỏ frame đang ghép.
+5. Nếu queue tràn hoặc quá thời gian 1500 ms, bỏ frame đang ghép.
 6. Khi đủ fragment, kiểm tra `frameLength`, preamble RTCM3 và CRC24Q.
 7. Chỉ khi hợp lệ mới gọi `Serial1.write(frame, frameLength)`.
+8. Khi UART nhận đủ frame, gửi ACK ứng dụng về Base; sequence hoàn thành bị gửi lại chỉ được ACK lại, không ghi UART lần hai.
 
 ## Source chính
 
@@ -307,8 +324,8 @@ thì điền MAC Base vào `include/Prog_Config.h`, build và upload lại.
 ## Kết quả kiểm tra phần mềm
 
 - PlatformIO `esp32u_rover_espnow`: **SUCCESS**.
-- RAM: 46,196 / 327,680 byte (14.1%).
-- Flash: 769,137 / 1,310,720 byte (58.7%).
-- Native unit test: **3/3 PASSED**.
+- RAM: 46,224 / 327,680 byte (14.1%).
+- Flash: 772,145 / 1,310,720 byte (58.9%).
+- Native unit test: **4/4 PASSED**.
 - MAC Base đã được provision; vẫn chưa đánh dấu kiểm thử phần cứng vì PMK/LMK, PCB thực tế và log end-to-end chưa được xác nhận.
-- Review Base/Rover ngày 2026-07-06 xác nhận protocol tương thích và băng thông đủ cho RTCM 1 Hz; còn cần xử lý timeout 500 ms, ACK ứng dụng, telemetry đầy đủ và test state machine trước khi coi là tối ưu cho vận hành dài hạn.
+- Tối ưu ngày 2026-07-06 đã đồng bộ timeout 1500 ms với deadline Base, thêm ACK ứng dụng/chống ghi trùng, UART TX buffer 2048 byte và telemetry đầy đủ. Vẫn cần test state machine và kiểm thử RTK end-to-end trên phần cứng.

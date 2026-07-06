@@ -17,12 +17,15 @@ struct EspNowRtcmStats {
     uint32_t packetsWrongSource;
     uint32_t packetsInvalidHeader;
     uint32_t queueOverflow;
+    uint32_t queueHighWater;
     uint32_t duplicateFragments;
     uint32_t frameTimeouts;
     uint32_t sequenceGaps;
     uint32_t crcErrors;
     uint32_t framesWritten;
     uint32_t uartWriteErrors;
+    uint32_t ackPacketsQueued;
+    uint32_t ackSendFailures;
     uint32_t lastValidFrameMillis;
 };
 
@@ -31,6 +34,7 @@ bool espnowRefreshPeerChannel();
 bool espnowIsReady();
 QueueHandle_t espnowGetReceiveQueue();
 EspNowRtcmStats espnowGetStats();
+bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence);
 
 void espnowRecordInvalidHeader();
 void espnowRecordDuplicateFragment();

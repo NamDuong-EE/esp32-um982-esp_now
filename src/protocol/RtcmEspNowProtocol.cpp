@@ -49,6 +49,14 @@ bool validatePacketHeader(const RtcmEspNowHeader& header, std::size_t receivedLe
     return receivedLength == sizeof(RtcmEspNowHeader) + header.payloadLength;
 }
 
+bool validateFrameAck(const RtcmEspNowAck& ack, std::size_t receivedLength) {
+    return receivedLength == sizeof(RtcmEspNowAck) &&
+           ack.magic == MAGIC &&
+           ack.version == VERSION &&
+           ack.packetType == PACKET_TYPE_FRAME_ACK &&
+           ack.status == ACK_STATUS_WRITTEN;
+}
+
 uint32_t crc24q(const uint8_t* data, std::size_t length) {
     if (data == nullptr && length != 0) {
         return 0;

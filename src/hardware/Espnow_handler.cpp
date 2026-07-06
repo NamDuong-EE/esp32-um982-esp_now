@@ -27,6 +27,17 @@ void updateCounter(uint32_t EspNowRtcmStats::*member, uint32_t increment = 1) {
     portEXIT_CRITICAL(&statsMux);
 }
 
+void recordQueueDepth() {
+    const uint32_t depth = receiveQueue == nullptr
+                               ? 0
+                               : static_cast<uint32_t>(uxQueueMessagesWaiting(receiveQueue));
+    portENTER_CRITICAL(&statsMux);
+    if (depth > stats.queueHighWater) {
+        stats.queueHighWater = depth;
+    }
+    portEXIT_CRITICAL(&statsMux);
+}
+
 bool isExpectedBase(const uint8_t* mac) {
     return mac != nullptr && std::memcmp(mac, ESPNOW_BASE_MAC, 6) == 0;
 }
@@ -57,6 +68,7 @@ void handleReceivedPacket(const uint8_t* sourceMac, const uint8_t* data, int len
         return;
     }
     updateCounter(&EspNowRtcmStats::packetsReceived);
+    recordQueueDepth();
 }
 
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -184,6 +196,32 @@ EspNowRtcmStats espnowGetStats() {
     EspNowRtcmStats copy = stats;
     portEXIT_CRITICAL(&statsMux);
     return copy;
+}
+
+bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence) {
+    if (!ready) {
+        updateCounter(&EspNowRtcmStats::ackSendFailures);
+        return false;
+    }
+
+    rtcm_espnow::RtcmEspNowAck ack{};
+    ack.magic = rtcm_espnow::MAGIC;
+    ack.version = rtcm_espnow::VERSION;
+    ack.packetType = rtcm_espnow::PACKET_TYPE_FRAME_ACK;
+    ack.streamId = streamId;
+    ack.frameSequence = frameSequence;
+    ack.status = rtcm_espnow::ACK_STATUS_WRITTEN;
+
+    const esp_err_t result = esp_now_send(
+        ESPNOW_BASE_MAC,
+        reinterpret_cast<const uint8_t*>(&ack),
+        sizeof(ack));
+    if (result != ESP_OK) {
+        updateCounter(&EspNowRtcmStats::ackSendFailures);
+        return false;
+    }
+    updateCounter(&EspNowRtcmStats::ackPacketsQueued);
+    return true;
 }
 
 void espnowRecordInvalidHeader() { updateCounter(&EspNowRtcmStats::packetsInvalidHeader); }

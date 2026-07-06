@@ -38,6 +38,21 @@ void test_packet_header_validation() {
     TEST_ASSERT_FALSE(validatePacketHeader(header, sizeof(header) + 2));
 }
 
+void test_frame_ack_validation() {
+    RtcmEspNowAck ack{};
+    ack.magic = MAGIC;
+    ack.version = VERSION;
+    ack.packetType = PACKET_TYPE_FRAME_ACK;
+    ack.streamId = 7;
+    ack.frameSequence = 42;
+    ack.status = ACK_STATUS_WRITTEN;
+
+    TEST_ASSERT_EQUAL_UINT32(12, sizeof(RtcmEspNowAck));
+    TEST_ASSERT_TRUE(validateFrameAck(ack, sizeof(ack)));
+    ack.status = 0;
+    TEST_ASSERT_FALSE(validateFrameAck(ack, sizeof(ack)));
+}
+
 void test_rtcm_crc_validation() {
     std::array<uint8_t, 9> frame{{0xD3, 0x00, 0x03, 0x3E, 0xD0, 0x00, 0, 0, 0}};
     const uint32_t crc = crc24q(frame.data(), frame.size() - 3);
@@ -54,6 +69,7 @@ void runTests() {
     UNITY_BEGIN();
     RUN_TEST(test_header_and_fragment_boundaries);
     RUN_TEST(test_packet_header_validation);
+    RUN_TEST(test_frame_ack_validation);
     RUN_TEST(test_rtcm_crc_validation);
     UNITY_END();
 }
