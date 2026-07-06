@@ -47,7 +47,7 @@ inline constexpr char TOPIC_PUB_HEALTH[] = "tdm2402/um980/health";
 
 // ================= ESP-NOW =================
 // Provision the STA MAC of the Base before deployment. An all-zero MAC is rejected.
-inline constexpr uint8_t ESPNOW_BASE_MAC[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+inline constexpr uint8_t ESPNOW_BASE_MAC[6] = {0x68, 0x09, 0x47, 0xf8, 0x48, 0x90};
 inline constexpr std::size_t ESPNOW_QUEUE_LENGTH = 16;
 inline constexpr uint32_t RTCM_REASSEMBLY_TIMEOUT_MS = 500;
 inline constexpr bool ESPNOW_USE_LR_250KBPS = true;

@@ -18,7 +18,7 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - [x] Health counter và log debug qua Serial đã được thêm.
 - [x] Source, dependency, environment, board definition và test LoRa/Heltec đã được loại bỏ.
 - [ ] Xác nhận GPIO16/17 đúng với PCB ESP32U thực tế.
-- [ ] Điền MAC STA của Base vào `ESPNOW_BASE_MAC` trong `include/Prog_Config.h`.
+- [x] Đã điền MAC STA của Base `68:09:47:F8:48:90` vào `ESPNOW_BASE_MAC`.
 - [ ] Provision PMK/LMK và bật `ESPNOW_ENCRYPTION_ENABLED` khi triển khai bảo mật.
 - [ ] Kiểm thử end-to-end với Base repo riêng + ESP32U Rover + UM980/982.
 
@@ -51,6 +51,37 @@ Reassembly, kiểm tra CRC24Q
         ↓
 Serial1.write(frame, frameLength) vào UM980/982
 ```
+
+### Kết quả review pipeline Base/Rover ngày 2026-07-06
+
+Kết luận: wire protocol của Base và Rover đang khớp về header 16 byte, payload fragment 234 byte, `streamId`, `frameSequence`, CRC24Q, channel 6 và LR 250 Kbps. Với RTCM 1 Hz, băng thông trung bình đủ; Rover đã có queue nên chịu burst tốt hơn Base. Tuy nhiên hệ thống chưa thể coi là tối ưu hoàn chỉnh cho vận hành quan trắc dài hạn.
+
+Các phần đã làm tốt:
+
+1. ESP-NOW receive callback chỉ kiểm tra/copy packet vào FreeRTOS queue rồi thoát.
+2. Queue dài 16 packet, chiếm khoảng 4 KB và chứa được ba RTCM frame kích thước cực đại cùng một fragment.
+3. Task riêng ghép fragment không phụ thuộc thứ tự nhận, dùng bitmap để loại fragment trùng.
+4. Header, kích thước fragment, RTCM preamble/length và CRC24Q đều được kiểm tra trước khi ghi UART.
+5. Rover chỉ nhận đúng MAC Base đã cấu hình và dùng cùng channel/LR với Base.
+
+Các điểm cần tối ưu tiếp:
+
+1. **Timeout Base/Rover chưa đồng bộ.** Rover bỏ frame sau 500 ms tính từ fragment đầu, trong khi Base chờ callback tối đa 250 ms và có hai retry. Chỉ một fragment thất bại ba attempt có thể chiếm khoảng 765 ms; Rover có thể timeout một frame mà Base vẫn đang retry. Cần đo callback thực tế rồi đặt một send deadline chung; trong giai đoạn test có thể tăng timeout Rover, nhưng vẫn phải bỏ correction quá cũ.
+2. **Chưa có ACK ứng dụng.** Base chỉ nhận send callback mức MAC. Rover chưa gửi ACK sau khi ghép đủ, CRC đúng và `Serial1.write()` thành công, nên Base chưa biết correction đã đi hết đường dữ liệu.
+3. **`Serial1.write()` có thể chặn task reassembly.** Với TX buffer mặc định và UART 115200, frame cực đại 1029 byte cần khoảng 89 ms trên wire. Queue 16 packet hiện đủ cho tải 1 Hz thông thường, nhưng cần theo dõi queue high-water/overflow hoặc thêm TX buffer/UART writer task nếu tăng tần suất.
+4. **Reassembly chỉ giữ một frame đang ghép.** Điều này đúng với Base hiện tại vì Base gửi stop-and-wait và không xen kẽ hai frame. Nếu Base chuyển sang pipeline nhiều frame, Rover phải dùng nhiều reassembly slot.
+5. **Health JSON chưa xuất hết counter đã có.** Cần thêm `packetsReceived`, `packetsInvalidHeader`, `packetsWrongSource`, `duplicateFragments`, `frameTimeouts` và `uartWriteErrors`; hiện log chỉ có frame, CRC, queue overflow, sequence gap và tuổi frame.
+6. **Unit test mới kiểm tra protocol cơ bản.** Chưa test reassembly out-of-order, duplicate, missing fragment, timeout, đổi `streamId`, sequence wrap, queue overflow và UART write failure.
+
+Thứ tự triển khai đề xuất:
+
+1. Đồng bộ deadline/timeout giữa Base và Rover, thêm đo thời gian từ fragment đầu tới frame hoàn chỉnh.
+2. Mở rộng health counter và queue high-water để kiểm chứng bằng phần cứng.
+3. Thêm test cho toàn bộ state machine reassembly.
+4. Thêm ACK ứng dụng theo `streamId + frameSequence` sau khi Rover ghi UART thành công.
+5. Chỉ tăng UART baud hoặc chuyển LR 500 Kbps khi số đo cho thấy tải thực chạm trần.
+
+Giới hạn review: repo Rover không có log phần cứng end-to-end mới nhất, nên chưa xác nhận tỷ lệ queue overflow, latency thực, UM980/982 nhận correction và trạng thái RTK Float/Fixed.
 
 ### MQTT tùy chọn
 
@@ -276,7 +307,8 @@ thì điền MAC Base vào `include/Prog_Config.h`, build và upload lại.
 ## Kết quả kiểm tra phần mềm
 
 - PlatformIO `esp32u_rover_espnow`: **SUCCESS**.
-- RAM: 46,104 / 327,680 byte (14.1%).
-- Flash: 762,641 / 1,310,720 byte (58.2%).
+- RAM: 46,196 / 327,680 byte (14.1%).
+- Flash: 769,137 / 1,310,720 byte (58.7%).
 - Native unit test: **3/3 PASSED**.
-- Chưa đánh dấu kiểm thử phần cứng vì MAC Base, PMK/LMK và PCB thực tế chưa được cung cấp.
+- MAC Base đã được provision; vẫn chưa đánh dấu kiểm thử phần cứng vì PMK/LMK, PCB thực tế và log end-to-end chưa được xác nhận.
+- Review Base/Rover ngày 2026-07-06 xác nhận protocol tương thích và băng thông đủ cho RTCM 1 Hz; còn cần xử lý timeout 500 ms, ACK ứng dụng, telemetry đầy đủ và test state machine trước khi coi là tối ưu cho vận hành dài hạn.
