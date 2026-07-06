@@ -35,10 +35,11 @@ void createRequiredTask(TaskFunction_t task,
     }
 }
 
-bool connectWiFiWithRetry() {
+bool setupNetworkWithRetry() {
     while (!setupWiFi()) {
-        Serial.println("[SETUP] Thu lai Wi-Fi sau 5 giay");
-        delay(5000);
+        Serial.printf("[SETUP] Thu lai cau hinh radio mang sau %lu giay\n",
+                      static_cast<unsigned long>(WIFI_RETRY_DELAY_MS / 1000));
+        delay(WIFI_RETRY_DELAY_MS);
     }
     return true;
 }
@@ -68,13 +69,19 @@ void setup() {
         }
     }
 
-    connectWiFiWithRetry();
+    if constexpr (WIFI_CONNECT_TO_ROUTER_ENABLED) {
+        setupNetworkWithRetry();
+    }
     if (!espnowSetup()) {
         Serial.println("[SETUP][WARN] ESP-NOW chua hoat dong; hay provision ESPNOW_BASE_MAC");
     }
 
-    setupMQTT();
-    connectMQTT();
+    if constexpr (ROVER_MQTT_ENABLED) {
+        setupMQTT();
+        connectMQTT();
+    } else {
+        Serial.println("[MQTT] Da tat theo cau hinh ROVER_MQTT_ENABLED=false");
+    }
     resetRtcmEspNowReassembly();
 
     createRequiredTask(taskRtcm, "RTCM ESP-NOW", 4096, 4, 1);
@@ -135,11 +142,15 @@ void gnssPublishTask(void* parameter) {
         }
 
         if (!localLine.isEmpty()) {
-            if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-                if (mqtt.connected()) {
-                    publishGGA(localLine);
+            if constexpr (ROVER_MQTT_ENABLED) {
+                if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+                    if (mqtt.connected()) {
+                        publishGGA(localLine);
+                    }
+                    xSemaphoreGive(mqttClientMutex);
                 }
-                xSemaphoreGive(mqttClientMutex);
+            } else {
+                publishGGA(localLine);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -152,11 +163,13 @@ void healthCheckTask(void* parameter) {
         const String payload = formDeviceHealthString();
         Serial.print("[HEALTH] ");
         Serial.println(payload);
-        if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-            if (mqtt.connected()) {
-                publishHealth(payload);
+        if constexpr (MQTT_PUBLISH_HEALTH_ENABLED) {
+            if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+                if (mqtt.connected()) {
+                    publishHealth(payload);
+                }
+                xSemaphoreGive(mqttClientMutex);
             }
-            xSemaphoreGive(mqttClientMutex);
         }
         vTaskDelay(pdMS_TO_TICKS(HEALTH_INTERVAL_MS));
     }
@@ -165,18 +178,21 @@ void healthCheckTask(void* parameter) {
 void loop() {
     static bool wasConnected = true;
     static uint32_t lastEspNowRetry = 0;
-    const bool wifiConnected = WiFi.status() == WL_CONNECTED;
 
-    if (!wifiConnected) {
-        if (wasConnected) {
-            Serial.println("[WIFI] Mat ket noi");
+    if constexpr (WIFI_CONNECT_TO_ROUTER_ENABLED) {
+        const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+
+        if (!wifiConnected) {
+            if (wasConnected) {
+                Serial.println("[WIFI] Mat ket noi router/AP");
+            }
+            wasConnected = false;
+            setupNetworkWithRetry();
+            espnowRefreshPeerChannel();
+        } else if (!wasConnected) {
+            wasConnected = true;
+            espnowRefreshPeerChannel();
         }
-        wasConnected = false;
-        connectWiFiWithRetry();
-        espnowRefreshPeerChannel();
-    } else if (!wasConnected) {
-        wasConnected = true;
-        espnowRefreshPeerChannel();
     }
 
     if (!espnowIsReady() && espnowBaseMacIsConfigured() &&
@@ -185,12 +201,14 @@ void loop() {
         espnowSetup();
     }
 
-    if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-        if (!mqtt.connected()) {
-            connectMQTT();
+    if constexpr (ROVER_MQTT_ENABLED) {
+        if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+            if (!mqtt.connected()) {
+                connectMQTT();
+            }
+            mqtt.loop();
+            xSemaphoreGive(mqttClientMutex);
         }
-        mqtt.loop();
-        xSemaphoreGive(mqttClientMutex);
     }
     vTaskDelay(pdMS_TO_TICKS(100));
 }

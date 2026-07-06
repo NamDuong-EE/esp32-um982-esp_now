@@ -104,19 +104,24 @@ bool espnowSetup() {
     if (ready) {
         return true;
     }
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[ESP-NOW][ERROR] Wi-Fi STA chua ket noi");
+    if constexpr (WIFI_CONNECT_TO_ROUTER_ENABLED) {
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("[ESP-NOW][ERROR] Wi-Fi STA chua ket noi router/AP");
+            return false;
+        }
+        if (!configureWiFiForEspNowLongRange()) {
+            return false;
+        }
+    } else if (!setupEspNowStaRadio()) {
         return false;
     }
+
     if (!espnowBaseMacIsConfigured()) {
         Serial.println("[ESP-NOW][ERROR] ESPNOW_BASE_MAC chua duoc provision trong Prog_Config.h");
         return false;
     }
     if (ESPNOW_ENCRYPTION_ENABLED && !espnowSecurityKeysAreConfigured()) {
         Serial.println("[ESP-NOW][ERROR] Ma hoa da bat nhung PMK/LMK chua duoc provision");
-        return false;
-    }
-    if (!configureWiFiForEspNowLongRange()) {
         return false;
     }
 
@@ -160,7 +165,7 @@ bool espnowSetup() {
 }
 
 bool espnowRefreshPeerChannel() {
-    if (!ready || WiFi.status() != WL_CONNECTED) {
+    if (!ready) {
         return false;
     }
     return configureWiFiForEspNowLongRange() && configurePeer(getWiFiChannel());

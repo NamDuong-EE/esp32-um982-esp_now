@@ -38,12 +38,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 int setupMQTT() {
+  if (!ROVER_MQTT_ENABLED) {
+    return 0;
+  }
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   mqtt.setCallback(mqttCallback);
   return 0;
 }
 
 int connectMQTT() {
+  if (!ROVER_MQTT_ENABLED) {
+    return 0;
+  }
   if (!mqtt.connected()) {
     Serial.println("\n[MQTT] Dang ket noi Broker...");
     String clientId = "ESP32_GW_" + String(random(0xffff), HEX);
@@ -68,6 +74,9 @@ int connectMQTT() {
 // }
 
 int publishData(String payload, bool isGGA) {
+  if (!ROVER_MQTT_ENABLED) {
+    return 0;
+  }
   if (mqtt.connected() && payload.length() > 0) {
     Serial.print("[MQTT UPLINK] ");
     Serial.println(payload);
@@ -93,6 +102,9 @@ int publishData(String payload, bool isGGA) {
 }
 
 int publishRaw(String payload, bool isGGA) {
+  if (!ROVER_MQTT_ENABLED) {
+    return 0;
+  }
   if (mqtt.connected() && payload.length() > 0) {
     if (isGGA) {
       mqtt.publish(TOPIC_PUB_RAW_GGA, payload.c_str());
@@ -106,6 +118,9 @@ int publishRaw(String payload, bool isGGA) {
 }
 
 int publishHealth(String payload) {
+  if (!ROVER_MQTT_ENABLED || !MQTT_PUBLISH_HEALTH_ENABLED) {
+    return 0;
+  }
   mqtt.publish(TOPIC_PUB_HEALTH, payload.c_str());
   Serial.print("[MQTT] Da gui thong tin suc khoe len topic: ");
   Serial.println(TOPIC_PUB_HEALTH);
@@ -113,5 +128,8 @@ int publishHealth(String payload) {
 }
 
 bool isMqttConnected() {
+  if (!ROVER_MQTT_ENABLED) {
+    return false;
+  }
   return mqtt.connected();
 }

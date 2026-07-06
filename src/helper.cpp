@@ -35,7 +35,7 @@ int publishGGA(String &nmeaBuffer)
             xSemaphoreGive(nmeaBufferMutex);
         }
 
-        // Đẩy lên MQTT
+        // Parse dữ liệu GNSS; MQTT uplink sẽ tự bỏ qua khi ROVER_MQTT_ENABLED=false.
         String jsonPayload = "";
         if (nmeaBuffer.startsWith("$KSXT"))
         {
@@ -86,8 +86,8 @@ String formDeviceHealthString()
     unsigned long uptime_s = millis() / 1000;
     uint32_t freeHeap = ESP.getFreeHeap();
 
-    int32_t rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
-    String connected_via = "WiFi";
+    int32_t rssi = WIFI_CONNECT_TO_ROUTER_ENABLED && WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
+    String connected_via = WIFI_CONNECT_TO_ROUTER_ENABLED ? "WiFi" : "ESP-NOW_STA";
 
     bool mqttOk = isMqttConnected();
     bool gnssOk = false;

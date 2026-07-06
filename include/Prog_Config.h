@@ -18,8 +18,20 @@ inline constexpr uint32_t MUTEX_TIMEOUT_MS = 1500;
 inline constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
 
 // ================= WI-FI / MQTT =================
+// ESP-NOW still uses the ESP32 Wi-Fi radio in STA mode, but field mode does
+// not connect to a router/AP and does not use MQTT by default.
+inline constexpr bool WIFI_CONNECT_TO_ROUTER_ENABLED = false;
+inline constexpr bool ROVER_MQTT_ENABLED = false;
+inline constexpr uint8_t ESPNOW_WIFI_CHANNEL = 6;
+
 inline constexpr char WIFI_SSID[] = "AITOGY";
 inline constexpr char WIFI_PASSWORD[] = "aitogy@aitogy";
+inline constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 20000;
+inline constexpr uint32_t WIFI_RETRY_DELAY_MS = 5000;
+
+// Field mode: keep health/status on Serial only. Set true when remote MQTT
+// diagnostics are needed again.
+inline constexpr bool MQTT_PUBLISH_HEALTH_ENABLED = false;
 
 inline constexpr char MQTT_SERVER[] = "aitogy.asia";
 inline constexpr uint16_t MQTT_PORT = 1883;
