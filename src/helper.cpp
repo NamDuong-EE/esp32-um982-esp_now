@@ -5,6 +5,7 @@ extern String latestGGA;
 gga_data_struct ggaData;
 gga_data_struct targetGgaData;
 ksxt_data_struct ksxtData;
+GgaDebugSnapshot ggaDebugSnapshot{};
 
 // int roverReadCharFromRtk(String &nmeaBuffer)
 // {
@@ -57,6 +58,16 @@ int publishGGA(String &nmeaBuffer)
             bool parseOk = parseGGA_toStruct(nmeaBuffer, ggaData);
             if (parseOk)
             {
+                if (xSemaphoreTake(nmeaBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE)
+                {
+                    ggaDebugSnapshot.valid = true;
+                    ggaDebugSnapshot.lat = ggaData.lat;
+                    ggaDebugSnapshot.lon = ggaData.lon;
+                    ggaDebugSnapshot.fixQuality = static_cast<uint8_t>(ggaData.rtk_status.toInt());
+                    ggaDebugSnapshot.satellites = static_cast<uint8_t>(ggaData.satellites.toInt());
+                    ggaDebugSnapshot.lastUpdateMs = millis();
+                    xSemaphoreGive(nmeaBufferMutex);
+                }
                 jsonPayload = parseGGA_toJSON(ggaData);
                 #if PROGRAM_DEBUG
                 Serial.println("[GGA PARSE] Da parse duoc du lieu GGA va chuyen sang JSON: ");
@@ -78,6 +89,18 @@ int publishGGA(String &nmeaBuffer)
     }
     nmeaBuffer = "";
     return -1;
+}
+
+GgaDebugSnapshot getGgaDebugSnapshot()
+{
+    GgaDebugSnapshot snapshot{};
+    if (nmeaBufferMutex != nullptr &&
+        xSemaphoreTake(nmeaBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE)
+    {
+        snapshot = ggaDebugSnapshot;
+        xSemaphoreGive(nmeaBufferMutex);
+    }
+    return snapshot;
 }
 
 String formDeviceHealthString()

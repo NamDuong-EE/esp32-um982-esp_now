@@ -116,7 +116,7 @@ uint8_t getWiFiChannel() {
 }
 
 bool setupEspNowStaRadio() {
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(DEBUG_WEB_ENABLED ? WIFI_AP_STA : WIFI_STA);
   WiFi.setSleep(false);
   WiFi.disconnect(false, false);
   delay(100);
@@ -134,6 +134,9 @@ bool setupEspNowStaRadio() {
   }
 
   Serial.println("[WIFI] Khong ket noi router/AP; chi dung STA radio cho ESP-NOW");
+  if constexpr (DEBUG_WEB_ENABLED) {
+    Serial.println("[WIFI] Debug web bat; Wi-Fi mode AP+STA");
+  }
   Serial.println("[WIFI] Local STA MAC: " + WiFi.macAddress());
   Serial.printf("[WIFI] ESP-NOW fixed channel: %u\n", getWiFiChannel());
   return true;
@@ -144,7 +147,7 @@ bool setupWiFi() {
     return setupEspNowStaRadio();
   }
 
-  WiFi.mode(WIFI_STA);
+  WiFi.mode(DEBUG_WEB_ENABLED ? WIFI_AP_STA : WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.disconnect(false, false);

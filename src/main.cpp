@@ -1,4 +1,5 @@
 #include "helper.h"
+#include "hardware/DebugWeb_handler.h"
 
 extern PubSubClient mqtt;
 
@@ -80,6 +81,11 @@ void setup() {
     }
     if (!espnowSetup()) {
         Serial.println("[SETUP][WARN] ESP-NOW chua hoat dong; hay provision ESPNOW_BASE_MAC");
+    }
+    if constexpr (DEBUG_WEB_ENABLED) {
+        if (!debugWebSetup()) {
+            Serial.println("[SETUP][WARN] Debug web chua hoat dong");
+        }
     }
 
     if constexpr (ROVER_MQTT_ENABLED) {
@@ -215,6 +221,9 @@ void loop() {
             mqtt.loop();
             xSemaphoreGive(mqttClientMutex);
         }
+    }
+    if constexpr (DEBUG_WEB_ENABLED) {
+        debugWebLoop();
     }
     vTaskDelay(pdMS_TO_TICKS(100));
 }

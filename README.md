@@ -19,6 +19,9 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - [x] Source, dependency, environment, board definition và test LoRa/Heltec đã được loại bỏ.
 - [ ] Xác nhận GPIO16/17 đúng với PCB ESP32U thực tế.
 - [x] Đã điền MAC STA của Base `68:09:47:F8:48:90` vào `ESPNOW_BASE_MAC`.
+- [x] Rà soát README/code ngày 2026-07-07: cấu hình Rover hiện khớp mô tả ESP-NOW LR, ACK ứng dụng, timeout 1500 ms, UART TX buffer 2048 byte và health counter.
+- [x] Chạy lại PlatformIO ngày 2026-07-07 bằng `C:\Users\admin\.platformio\penv\Scripts\pio.exe`: firmware build SUCCESS và native unit test 4/4 PASSED.
+- [x] Thêm chế độ debug web SoftAP tùy chọn tại `192.168.4.1`, lấy lat/lon/RTK/số vệ tinh từ GGA và hiển thị thêm health ESP-NOW/RTCM.
 - [ ] Provision PMK/LMK và bật `ESPNOW_ENCRYPTION_ENABLED` khi triển khai bảo mật.
 - [ ] Kiểm thử end-to-end với Base repo riêng + ESP32U Rover + UM980/982.
 
@@ -98,6 +101,32 @@ Nếu muốn bật lại MQTT:
 2. Đặt `WIFI_CONNECT_TO_ROUTER_ENABLED = true`.
 3. Cấu hình `WIFI_SSID`, `WIFI_PASSWORD` và thông tin MQTT.
 4. Khóa router 2.4 GHz cùng channel với `ESPNOW_WIFI_CHANNEL`.
+
+### Debug web SoftAP tùy chọn
+
+Mặc định debug web tắt để field mode gọn nhất. Khi cần xem nhanh trạng thái Rover ngoài hiện trường, bật trong `include/Prog_Config.h`:
+
+```cpp
+#define DEBUG_WEB_ENABLED 1
+```
+
+Khi bật, Rover chạy `WIFI_AP_STA`, mở SoftAP riêng và host trang debug tại:
+
+```text
+SSID: ESP32-Rover-Debug
+Password: 12345678
+URL: http://192.168.4.1
+API: http://192.168.4.1/api/status
+```
+
+SoftAP dùng cùng `ESPNOW_WIFI_CHANNEL` với ESP-NOW để tránh đổi channel radio. Trang HTML poll JSON mỗi 1 giây và chỉ lấy dữ liệu GNSS từ câu GGA:
+
+- `lat`, `lon`
+- `rtk_status` là số GGA fix quality, ví dụ `4` hoặc `5`
+- `satellites`
+- `last_gga_age_ms`
+
+Phần health trên trang hiển thị thêm `espnow_ready`, `rtcm_frames`, `last_rtcm_age_ms`, CRC error, queue overflow, sequence gap, ACK và free heap.
 
 ## Kết nối ESP32U với UM980/982
 
@@ -217,6 +246,8 @@ Task reassembly:
 | `src/functions/Rtcm_EspNow_Handler.cpp` | Ghép fragment, kiểm tra CRC24Q và ghi vào UM980/982 |
 | `src/main.cpp` | Entry point firmware Rover |
 | `src/helper.cpp` | Parse NMEA, health counter, log Serial |
+| `include/hardware/DebugWeb_handler.h` | API debug web SoftAP tùy chọn |
+| `src/hardware/DebugWeb_handler.cpp` | Host HTML/API debug tại `192.168.4.1` khi `DEBUG_WEB_ENABLED=1` |
 | `include/Prog_Config.h` | GPIO UART, MAC Base, channel, MQTT tùy chọn, PMK/LMK |
 | `platformio.ini` | Environment `esp32u_rover_espnow` và native protocol test |
 
@@ -285,6 +316,13 @@ python -m platformio device monitor --port COM5 --baud 115200
 [SETUP] Khoi dong hoan tat
 ```
 
+Nếu `DEBUG_WEB_ENABLED=1`, log sẽ có thêm:
+
+```text
+[WIFI] Debug web bat; Wi-Fi mode AP+STA
+[DEBUG_WEB] SoftAP SSID=ESP32-Rover-Debug IP=192.168.4.1 channel=6 MAC=XX:XX:XX:XX:XX:XX
+```
+
 Nếu thấy:
 
 ```text
@@ -316,16 +354,22 @@ thì điền MAC Base vào `include/Prog_Config.h`, build và upload lại.
 ## Thứ tự triển khai tiếp theo
 
 1. [ ] Xác nhận GPIO16/17 trên PCB ESP32U thực tế.
-2. [ ] Điền `ESPNOW_BASE_MAC` thật.
-3. [ ] Tạo repo Base riêng và triển khai sender theo protocol trong README này.
-4. [ ] Kiểm thử end-to-end Base repo riêng → ESP32U Rover → UM980/982.
-5. [ ] Đo tầm xa LR 250 Kbps, sau đó thử LR 500 Kbps nếu cần.
+2. [x] Điền `ESPNOW_BASE_MAC` thật: `68:09:47:F8:48:90`.
+3. [ ] Thêm `C:\Users\admin\.platformio\penv\Scripts` vào PATH nếu muốn gọi trực tiếp `pio` trong shell mới.
+4. [ ] Tạo repo Base riêng và triển khai sender theo protocol trong README này.
+5. [ ] Kiểm thử end-to-end Base repo riêng → ESP32U Rover → UM980/982.
+6. [ ] Đo tầm xa LR 250 Kbps, sau đó thử LR 500 Kbps nếu cần.
 
-## Kết quả kiểm tra phần mềm
+## Kết quả kiểm tra phần mềm gần nhất
 
+- Lần kiểm tra phần mềm gần nhất: 2026-07-07.
+- PlatformIO Core: **6.1.19** tại `C:\Users\admin\.platformio\penv\Scripts\pio.exe`.
 - PlatformIO `esp32u_rover_espnow`: **SUCCESS**.
-- RAM: 46,224 / 327,680 byte (14.1%).
-- Flash: 772,145 / 1,310,720 byte (58.9%).
+- RAM: 46,256 / 327,680 byte (14.1%) với `DEBUG_WEB_ENABLED=0`.
+- Flash: 772,245 / 1,310,720 byte (58.9%) với `DEBUG_WEB_ENABLED=0`.
 - Native unit test: **4/4 PASSED**.
+- Artifact `.pio/build/esp32u_rover_espnow/firmware.bin` hiện có kích thước 778,816 byte, cập nhật lần cuối 2026-07-07 10:19.
 - MAC Base đã được provision; vẫn chưa đánh dấu kiểm thử phần cứng vì PMK/LMK, PCB thực tế và log end-to-end chưa được xác nhận.
 - Tối ưu ngày 2026-07-06 đã đồng bộ timeout 1500 ms với deadline Base, thêm ACK ứng dụng/chống ghi trùng, UART TX buffer 2048 byte và telemetry đầy đủ. Vẫn cần test state machine và kiểm thử RTK end-to-end trên phần cứng.
+- Rà soát ngày 2026-07-07: `pio` chưa có trong PATH của shell hiện tại, nhưng chạy trực tiếp bằng đường dẫn trong `.platformio\penv\Scripts` thành công.
+- Debug web đã được build thử với `DEBUG_WEB_ENABLED=1`: **SUCCESS**, RAM 46,672 byte (14.2%), Flash 809,057 byte (61.7%).

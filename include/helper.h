@@ -19,7 +19,17 @@ extern SemaphoreHandle_t mqttClientMutex;
 extern SemaphoreHandle_t nmeaBufferMutex;
 extern SemaphoreHandle_t gnssTxMutex;
 
+struct GgaDebugSnapshot {
+    bool valid;
+    double lat;
+    double lon;
+    uint8_t fixQuality;
+    uint8_t satellites;
+    uint32_t lastUpdateMs;
+};
+
 String formDeviceHealthString();
 int publishGGA(String& nmeaBuffer);
+GgaDebugSnapshot getGgaDebugSnapshot();
 
 #endif

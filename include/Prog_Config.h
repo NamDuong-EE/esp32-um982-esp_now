@@ -46,6 +46,16 @@ inline constexpr char TOPIC_PUB_RAW_GGA[] = "tdm2402/um980/raw/gga";
 inline constexpr char TOPIC_PUB_RAW_KSXT[] = "tdm2402/um980/raw/ksxt";
 inline constexpr char TOPIC_PUB_HEALTH[] = "tdm2402/um980/health";
 
+// ================= DEBUG WEB =================
+// Disabled by default for field operation. Set to 1 to compile and host a
+// simple SoftAP debug page at http://192.168.4.1 on the ESP-NOW channel.
+#ifndef DEBUG_WEB_ENABLED
+#define DEBUG_WEB_ENABLED 1
+#endif
+inline constexpr char DEBUG_WEB_AP_SSID[] = "ESP32-Rover-Debug";
+inline constexpr char DEBUG_WEB_AP_PASSWORD[] = "12345678";
+inline constexpr uint8_t DEBUG_WEB_AP_MAX_CLIENTS = 2;
+
 // ================= ESP-NOW =================
 // Provision the STA MAC of the Base before deployment. An all-zero MAC is rejected.
 inline constexpr uint8_t ESPNOW_BASE_MAC[6] = {0x68, 0x09, 0x47, 0xf8, 0x48, 0x90};
