@@ -93,6 +93,24 @@ void printVisibleTargetNetwork() {
   WiFi.scanDelete();
 }
 
+bool configureMaxTxPower() {
+  if (!WiFi.setTxPower(WIFI_POWER_19_5dBm)) {
+    Serial.println("[WIFI][ERROR] Khong set duoc TX power 19.5 dBm");
+    return false;
+  }
+
+  int8_t actualPower = 0;
+  const esp_err_t result = esp_wifi_get_max_tx_power(&actualPower);
+  if (result == ESP_OK) {
+    Serial.printf("[WIFI] TX power fixed raw=%d dBm=%.2f\n",
+                  actualPower,
+                  actualPower / 4.0f);
+  } else {
+    Serial.printf("[WIFI][WARN] Khong doc duoc TX power: %d\n", result);
+  }
+  return true;
+}
+
 } // namespace
 
 bool configureWiFiForEspNowLongRange() {
@@ -120,6 +138,9 @@ bool setupEspNowStaRadio() {
   WiFi.setSleep(false);
   WiFi.disconnect(false, false);
   delay(100);
+  if (!configureMaxTxPower()) {
+    return false;
+  }
 
   if (!configureWiFiForEspNowLongRange()) {
     return false;
@@ -152,6 +173,9 @@ bool setupWiFi() {
   WiFi.setAutoReconnect(true);
   WiFi.disconnect(false, false);
   delay(100);
+  if (!configureMaxTxPower()) {
+    return false;
+  }
   Serial.print("\n[WIFI] Dang ket noi mang: ");
   Serial.println(WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);

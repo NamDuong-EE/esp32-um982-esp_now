@@ -373,3 +373,5 @@ thì điền MAC Base vào `include/Prog_Config.h`, build và upload lại.
 - Tối ưu ngày 2026-07-06 đã đồng bộ timeout 1500 ms với deadline Base, thêm ACK ứng dụng/chống ghi trùng, UART TX buffer 2048 byte và telemetry đầy đủ. Vẫn cần test state machine và kiểm thử RTK end-to-end trên phần cứng.
 - Rà soát ngày 2026-07-07: `pio` chưa có trong PATH của shell hiện tại, nhưng chạy trực tiếp bằng đường dẫn trong `.platformio\penv\Scripts` thành công.
 - Debug web đã được build thử với `DEBUG_WEB_ENABLED=1`: **SUCCESS**, RAM 46,672 byte (14.2%), Flash 809,057 byte (61.7%).
+- Đã set cứng công suất phát WiFi/ESP-NOW của Rover bằng `WiFi.setTxPower(WIFI_POWER_19_5dBm)` ngay sau khi bật STA/AP+STA radio. Firmware đọc lại `esp_wifi_get_max_tx_power()` và in log `[WIFI] TX power fixed raw=... dBm=...` để xác nhận runtime.
+- Đã build xác nhận sau khi set TX power 19.5 dBm: `esp32u_rover_espnow` SUCCESS, RAM 46,696/327,680 byte (14.3%), Flash 810,205/1,310,720 byte (61.8%).
