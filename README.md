@@ -1,8 +1,8 @@
 # ESP32 GNSS Rover
 
-Firmware Rover dùng ESP32U nhận dữ liệu hiệu chỉnh RTCM từ Base qua ESP-NOW Long Range, kiểm tra/gom fragment rồi ghi nhị phân vào UM980/982 qua UART. Repo này chỉ giữ phần **Rover**; firmware **Base** sẽ được tách sang repository riêng.
+Firmware Rover dùng ESP32U nhận dữ liệu hiệu chỉnh RTCM từ Base qua ESP-NOW Long Range, kiểm tra/gom fragment rồi ghi UM980/982 qua UART. Repo này chỉ giữ phần **Rover**; firmware **Base** đã được tách sang repository riêng.
 
-Chế độ mặc định ngoài thực địa không kết nối Wi-Fi router/AP và không dùng MQTT. ESP32 vẫn bật Wi-Fi radio ở `WIFI_STA` vì ESP-NOW chạy trên Wi-Fi driver của ESP32.
+Chế độ mặc định không kết nối Wi-Fi router/AP. ESP32 bật Wi-Fi ở interface `WIFI_STA` để thiết lập giao thức ESP-NOW.
 
 ```text
 Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ──> UM980/982 Rover
@@ -17,7 +17,7 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - [x] Chỉ frame RTCM hoàn chỉnh, đúng CRC mới được ghi nhị phân vào UART UM980/982.
 - [x] Health counter và log debug qua Serial đã được thêm.
 - [x] Source, dependency, environment, board definition và test LoRa/Heltec đã được loại bỏ.
-- [ ] Xác nhận GPIO16/17 đúng với PCB ESP32U thực tế.
+- [x] Xác nhận GPIO16/17 đúng với PCB ESP32U thực tế.
 - [x] Đã điền MAC STA của Base `68:09:47:F8:48:90` vào `ESPNOW_BASE_MAC`.
 - [x] Rà soát README/code ngày 2026-07-07: cấu hình Rover hiện khớp mô tả ESP-NOW LR, ACK ứng dụng, timeout 1500 ms, UART TX buffer 2048 byte và health counter.
 - [x] Chạy lại PlatformIO ngày 2026-07-07 bằng `C:\Users\admin\.platformio\penv\Scripts\pio.exe`: firmware build SUCCESS và native unit test 4/4 PASSED.
