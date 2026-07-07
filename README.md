@@ -375,3 +375,5 @@ thì điền MAC Base vào `include/Prog_Config.h`, build và upload lại.
 - Debug web đã được build thử với `DEBUG_WEB_ENABLED=1`: **SUCCESS**, RAM 46,672 byte (14.2%), Flash 809,057 byte (61.7%).
 - Đã set cứng công suất phát WiFi/ESP-NOW của Rover bằng `WiFi.setTxPower(WIFI_POWER_19_5dBm)` ngay sau khi bật STA/AP+STA radio. Firmware đọc lại `esp_wifi_get_max_tx_power()` và in log `[WIFI] TX power fixed raw=... dBm=...` để xác nhận runtime.
 - Đã build xác nhận sau khi set TX power 19.5 dBm: `esp32u_rover_espnow` SUCCESS, RAM 46,696/327,680 byte (14.3%), Flash 810,205/1,310,720 byte (61.8%).
+- Đã thêm RSSI ESP-NOW Base vào web debug Rover: dùng promiscuous callback lọc source MAC của Base, cập nhật `espnow_rssi_dbm` trong `/api/status` và hiển thị card `Base RSSI` trên trang `192.168.4.1`.
+- Đã build xác nhận sau khi thêm RSSI web debug và bỏ `espnow_rssi_age_ms`/`espnow_rssi_samples`: `esp32u_rover_espnow` SUCCESS, RAM 46,704/327,680 byte (14.3%), Flash 811,597/1,310,720 byte (61.9%).

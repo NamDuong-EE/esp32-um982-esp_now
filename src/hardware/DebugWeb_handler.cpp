@@ -53,6 +53,7 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
       <div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div>
       <div class="card"><div class="label">RTK status</div><div id="rtk" class="value">--</div></div>
       <div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div>
+      <div class="card"><div class="label">Base RSSI</div><div id="rssi" class="value">--</div></div>
     </section>
     <section class="health">
       <table>
@@ -61,8 +62,9 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
     </section>
   </main>
   <script>
-    const fields = ["espnow_ready","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
+    const fields = ["espnow_ready","espnow_rssi_dbm","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
     function text(value){return value === null || value === undefined ? "--" : value;}
+    function rssiClass(value){return value === null || value === undefined ? "bad" : value >= -65 ? "ok" : value >= -80 ? "warn" : "bad";}
     async function refresh(){
       try{
         const response = await fetch("/api/status",{cache:"no-store"});
@@ -72,6 +74,8 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
         document.getElementById("rtk").textContent = data.gga.valid ? data.gga.fix_quality : "--";
         document.getElementById("rtk").className = "value " + (data.gga.fix_quality === 4 ? "ok" : data.gga.fix_quality === 5 ? "warn" : "bad");
         document.getElementById("sats").textContent = data.gga.valid ? data.gga.satellites : "--";
+        document.getElementById("rssi").textContent = data.health.espnow_rssi_dbm === null ? "--" : `${data.health.espnow_rssi_dbm} dBm`;
+        document.getElementById("rssi").className = "value " + rssiClass(data.health.espnow_rssi_dbm);
         document.getElementById("health").innerHTML = fields.map((key)=>`<tr><td>${key}</td><td>${text(data.health[key])}</td></tr>`).join("");
       }catch(error){
         document.getElementById("health").innerHTML = "<tr><td>status</td><td>offline</td></tr>";
@@ -108,9 +112,10 @@ void handleStatus() {
     const EspNowRtcmStats espnowStats = espnowGetStats();
     const uint32_t now = millis();
     const bool hasRtcmFrame = espnowStats.lastValidFrameMillis != 0;
+    const bool hasRssi = espnowStats.hasRssi;
 
     String payload;
-    payload.reserve(768);
+    payload.reserve(1024);
     payload += "{\"gga\":{";
     payload += "\"valid\":";
     payload += gga.valid ? "true" : "false";
@@ -135,6 +140,8 @@ void handleStatus() {
     payload += espnowIsReady() ? "true" : "false";
     payload += ",\"base_provisioned\":";
     payload += espnowBaseMacIsConfigured() ? "true" : "false";
+    payload += ",\"espnow_rssi_dbm\":";
+    payload += hasRssi ? String(espnowStats.lastRssiDbm) : "null";
     payload += ",\"packets_received\":";
     payload += String(espnowStats.packetsReceived);
     payload += ",\"packets_wrong_source\":";

@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <cstddef>
 #include <cstring>
 
 #if __has_include(<esp_arduino_version.h>)
@@ -20,6 +21,8 @@ QueueHandle_t receiveQueue = nullptr;
 bool ready = false;
 EspNowRtcmStats stats{};
 portMUX_TYPE statsMux = portMUX_INITIALIZER_UNLOCKED;
+constexpr std::size_t IEEE80211_ADDR2_OFFSET = 10;
+constexpr std::size_t IEEE80211_MIN_ADDR2_LENGTH = IEEE80211_ADDR2_OFFSET + 6;
 
 void updateCounter(uint32_t EspNowRtcmStats::*member, uint32_t increment = 1) {
     portENTER_CRITICAL(&statsMux);
@@ -40,6 +43,30 @@ void recordQueueDepth() {
 
 bool isExpectedBase(const uint8_t* mac) {
     return mac != nullptr && std::memcmp(mac, ESPNOW_BASE_MAC, 6) == 0;
+}
+
+void recordRssi(int8_t rssi) {
+    portENTER_CRITICAL(&statsMux);
+    stats.hasRssi = true;
+    stats.lastRssiDbm = rssi;
+    portEXIT_CRITICAL(&statsMux);
+}
+
+void onPromiscuousPacket(void* buffer, wifi_promiscuous_pkt_type_t type) {
+    if (buffer == nullptr || (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA)) {
+        return;
+    }
+
+    const auto* packet = static_cast<const wifi_promiscuous_pkt_t*>(buffer);
+    if (packet->rx_ctrl.rx_state != 0 ||
+        packet->rx_ctrl.sig_len < IEEE80211_MIN_ADDR2_LENGTH) {
+        return;
+    }
+
+    const uint8_t* sourceMac = packet->payload + IEEE80211_ADDR2_OFFSET;
+    if (isExpectedBase(sourceMac)) {
+        recordRssi(static_cast<int8_t>(packet->rx_ctrl.rssi));
+    }
 }
 
 void handleReceivedPacket(const uint8_t* sourceMac, const uint8_t* data, int length) {
@@ -110,6 +137,31 @@ bool configurePeer(uint8_t channel) {
     return true;
 }
 
+void setupRssiMonitor() {
+    wifi_promiscuous_filter_t filter{};
+    filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
+
+    esp_err_t result = esp_wifi_set_promiscuous_filter(&filter);
+    if (result != ESP_OK) {
+        Serial.printf("[ESP-NOW][WARN] Khong dat duoc RSSI promiscuous filter: %d\n", result);
+        return;
+    }
+
+    result = esp_wifi_set_promiscuous_rx_cb(onPromiscuousPacket);
+    if (result != ESP_OK) {
+        Serial.printf("[ESP-NOW][WARN] Khong dang ky duoc RSSI callback: %d\n", result);
+        return;
+    }
+
+    result = esp_wifi_set_promiscuous(true);
+    if (result != ESP_OK) {
+        Serial.printf("[ESP-NOW][WARN] Khong bat duoc RSSI monitor: %d\n", result);
+        return;
+    }
+
+    Serial.println("[ESP-NOW] RSSI monitor enabled for Base MAC");
+}
+
 } // namespace
 
 bool espnowSetup() {
@@ -168,6 +220,9 @@ bool espnowSetup() {
         vQueueDelete(receiveQueue);
         receiveQueue = nullptr;
         return false;
+    }
+    if constexpr (DEBUG_WEB_ENABLED) {
+        setupRssiMonitor();
     }
 
     ready = true;

@@ -27,6 +27,8 @@ struct EspNowRtcmStats {
     uint32_t ackPacketsQueued;
     uint32_t ackSendFailures;
     uint32_t lastValidFrameMillis;
+    bool hasRssi;
+    int8_t lastRssiDbm;
 };
 
 bool espnowSetup();
