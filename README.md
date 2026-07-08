@@ -1,8 +1,10 @@
 # ESP32 GNSS Rover
 
-Firmware Rover dùng ESP32U nhận dữ liệu hiệu chỉnh RTCM từ Base qua ESP-NOW Long Range, kiểm tra/gom fragment rồi ghi UM980/982 qua UART. Repo này chỉ giữ phần **Rover**; firmware **Base** đã được tách sang repository riêng.
+Firmware dùng cho ESP32U nhận dữ liệu hiệu chỉnh RTCM từ Base qua ESP-NOW Long Range, kiểm tra/gom fragment rồi ghi UM980/982 qua UART. Repo này chỉ giữ phần **Rover**; firmware **Base** ở repo riêng.
 
-Chế độ mặc định không kết nối Wi-Fi router/AP. ESP32 bật Wi-Fi ở interface `WIFI_STA` để thiết lập giao thức ESP-NOW.
+Phiên bản thử nghiệm hiện tại chỉ đang tập trung kiểm tra khả năng nhận gói tin RTCM của base, chưa có tính năng kết nối đến NTRIP Caster và cập nhập trạng thái lên MQTT
+
+Trong phiên bản thử nghiệm hiện tại rover chạy ở chế độ mặc định không kết nối với Wi-Fi router/AP. ESP32 bật Wi-Fi ở interface `WIFI_STA` để thiết lập giao thức ESP-NOW.
 
 ```text
 Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ──> UM980/982 Rover
@@ -83,7 +85,6 @@ Phần còn lại cần kiểm chứng:
 3. ACK xác nhận frame đã vào UART TX buffer, không xác nhận UM980/UM982 đã chuyển sang RTK Float/Fixed.
 4. Giữ UART 115200 và LR 250 Kbps cho tới khi telemetry phần cứng chứng minh cần tăng tốc.
 
-Giới hạn review: repo Rover không có log phần cứng end-to-end mới nhất, nên chưa xác nhận tỷ lệ queue overflow, latency thực, UM980/982 nhận correction và trạng thái RTK Float/Fixed.
 
 ### MQTT tùy chọn
 
