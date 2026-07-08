@@ -53,6 +53,60 @@ void test_frame_ack_validation() {
     TEST_ASSERT_FALSE(validateFrameAck(ack, sizeof(ack)));
 }
 
+void test_pairing_packet_validation() {
+    const std::array<uint8_t, 16> key{{0x10, 0x21, 0x32, 0x43,
+                                      0x54, 0x65, 0x76, 0x87,
+                                      0x98, 0xA9, 0xBA, 0xCB,
+                                      0xDC, 0xED, 0xFE, 0x0F}};
+    constexpr uint32_t networkId = 0xA1700001UL;
+    constexpr uint32_t baseNonce = 0x11223344UL;
+    constexpr uint32_t roverNonce = 0x55667788UL;
+
+    TEST_ASSERT_EQUAL_UINT32(4, sizeof(EspNowCommonHeader));
+    TEST_ASSERT_EQUAL_UINT32(28, sizeof(PairDiscoveryPacket));
+    TEST_ASSERT_EQUAL_UINT32(28, sizeof(PairResponsePacket));
+    TEST_ASSERT_EQUAL_UINT32(24, sizeof(PairConfirmPacket));
+
+    PairDiscoveryPacket discovery{};
+    discovery.common.magic = MAGIC;
+    discovery.common.version = VERSION;
+    discovery.common.packetType = PACKET_TYPE_PAIR_DISCOVERY;
+    discovery.role = ROLE_BASE;
+    discovery.networkId = networkId;
+    discovery.baseDeviceId = 0x01020304UL;
+    discovery.baseNonce = baseNonce;
+    discovery.pairingWindowMs = 60000;
+    discovery.authTag = pairingAuthTag(discovery, key.data(), key.size());
+    TEST_ASSERT_TRUE(validatePairDiscovery(discovery, sizeof(discovery), networkId, key.data(), key.size()));
+    TEST_ASSERT_FALSE(validatePairDiscovery(discovery, sizeof(discovery), networkId + 1, key.data(), key.size()));
+
+    PairResponsePacket response{};
+    response.common.magic = MAGIC;
+    response.common.version = VERSION;
+    response.common.packetType = PACKET_TYPE_PAIR_RESPONSE;
+    response.role = ROLE_ROVER;
+    response.networkId = networkId;
+    response.roverDeviceId = 0xAABBCCDDUL;
+    response.roverNonce = roverNonce;
+    response.baseNonceEcho = baseNonce;
+    response.authTag = pairingAuthTag(response, key.data(), key.size());
+    TEST_ASSERT_TRUE(validatePairResponse(response, sizeof(response), networkId, baseNonce, key.data(), key.size()));
+    TEST_ASSERT_FALSE(validatePairResponse(response, sizeof(response), networkId, baseNonce + 1, key.data(), key.size()));
+
+    PairConfirmPacket confirm{};
+    confirm.common.magic = MAGIC;
+    confirm.common.version = VERSION;
+    confirm.common.packetType = PACKET_TYPE_PAIR_CONFIRM;
+    confirm.role = ROLE_BASE;
+    confirm.networkId = networkId;
+    confirm.baseNonce = baseNonce;
+    confirm.roverNonce = roverNonce;
+    confirm.authTag = pairingAuthTag(confirm, key.data(), key.size());
+    TEST_ASSERT_TRUE(validatePairConfirm(confirm, sizeof(confirm), networkId, baseNonce, roverNonce, key.data(), key.size()));
+    confirm.roverNonce ^= 1U;
+    TEST_ASSERT_FALSE(validatePairConfirm(confirm, sizeof(confirm), networkId, baseNonce, roverNonce, key.data(), key.size()));
+}
+
 void test_rtcm_crc_validation() {
     std::array<uint8_t, 9> frame{{0xD3, 0x00, 0x03, 0x3E, 0xD0, 0x00, 0, 0, 0}};
     const uint32_t crc = crc24q(frame.data(), frame.size() - 3);
@@ -70,6 +124,7 @@ void runTests() {
     RUN_TEST(test_header_and_fragment_boundaries);
     RUN_TEST(test_packet_header_validation);
     RUN_TEST(test_frame_ack_validation);
+    RUN_TEST(test_pairing_packet_validation);
     RUN_TEST(test_rtcm_crc_validation);
     UNITY_END();
 }

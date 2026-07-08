@@ -80,7 +80,7 @@ void setup() {
         setupNetworkWithRetry();
     }
     if (!espnowSetup()) {
-        Serial.println("[SETUP][WARN] ESP-NOW chua hoat dong; hay provision ESPNOW_BASE_MAC");
+        Serial.println("[SETUP][WARN] ESP-NOW chua hoat dong; hay pair voi Base");
     }
     if constexpr (DEBUG_WEB_ENABLED) {
         if (!debugWebSetup()) {
@@ -207,7 +207,7 @@ void loop() {
         }
     }
 
-    if (!espnowIsReady() && espnowBaseMacIsConfigured() &&
+    if (!espnowIsReady() && ESPNOW_PAIRING_ENABLED &&
         millis() - lastEspNowRetry >= 5000) {
         lastEspNowRetry = millis();
         espnowSetup();
@@ -225,5 +225,6 @@ void loop() {
     if constexpr (DEBUG_WEB_ENABLED) {
         debugWebLoop();
     }
+    espnowLoop();
     vTaskDelay(pdMS_TO_TICKS(100));
 }

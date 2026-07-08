@@ -27,16 +27,24 @@ struct EspNowRtcmStats {
     uint32_t ackPacketsQueued;
     uint32_t ackSendFailures;
     uint32_t lastValidFrameMillis;
+    uint32_t pairDiscoveryReceived;
+    uint32_t pairResponsesSent;
+    uint32_t pairConfirmsAccepted;
+    uint32_t pairAuthFailures;
     bool hasRssi;
     int8_t lastRssiDbm;
+    bool hasStoredBaseMac;
+    bool pairingActive;
 };
 
 bool espnowSetup();
 bool espnowRefreshPeerChannel();
 bool espnowIsReady();
+void espnowLoop();
 QueueHandle_t espnowGetReceiveQueue();
 EspNowRtcmStats espnowGetStats();
 bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence);
+bool espnowGetBaseMac(uint8_t mac[6]);
 
 void espnowRecordInvalidHeader();
 void espnowRecordDuplicateFragment();

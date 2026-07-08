@@ -62,7 +62,7 @@ const char INDEX_HTML[] PROGMEM = R"HTML(
     </section>
   </main>
   <script>
-    const fields = ["espnow_ready","espnow_rssi_dbm","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
+    const fields = ["espnow_ready","base_provisioned","pairing_active","pair_confirm_ok","espnow_rssi_dbm","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
     function text(value){return value === null || value === undefined ? "--" : value;}
     function rssiClass(value){return value === null || value === undefined ? "bad" : value >= -65 ? "ok" : value >= -80 ? "warn" : "bad";}
     async function refresh(){
@@ -113,6 +113,8 @@ void handleStatus() {
     const uint32_t now = millis();
     const bool hasRtcmFrame = espnowStats.lastValidFrameMillis != 0;
     const bool hasRssi = espnowStats.hasRssi;
+    uint8_t activeBaseMac[6] = {};
+    const bool hasActiveBaseMac = espnowGetBaseMac(activeBaseMac);
 
     String payload;
     payload.reserve(1024);
@@ -139,7 +141,19 @@ void handleStatus() {
     payload += ",\"espnow_ready\":";
     payload += espnowIsReady() ? "true" : "false";
     payload += ",\"base_provisioned\":";
-    payload += espnowBaseMacIsConfigured() ? "true" : "false";
+    payload += hasActiveBaseMac ? "true" : "false";
+    payload += ",\"base_mac_stored\":";
+    payload += espnowStats.hasStoredBaseMac ? "true" : "false";
+    payload += ",\"pairing_active\":";
+    payload += espnowStats.pairingActive ? "true" : "false";
+    payload += ",\"pair_discovery_rx\":";
+    payload += String(espnowStats.pairDiscoveryReceived);
+    payload += ",\"pair_response_tx\":";
+    payload += String(espnowStats.pairResponsesSent);
+    payload += ",\"pair_confirm_ok\":";
+    payload += String(espnowStats.pairConfirmsAccepted);
+    payload += ",\"pair_auth_fail\":";
+    payload += String(espnowStats.pairAuthFailures);
     payload += ",\"espnow_rssi_dbm\":";
     payload += hasRssi ? String(espnowStats.lastRssiDbm) : "null";
     payload += ",\"packets_received\":";

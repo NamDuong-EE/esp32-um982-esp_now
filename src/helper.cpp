@@ -126,15 +126,28 @@ String formDeviceHealthString()
                                     : millis() - espnowStats.lastValidFrameMillis;
     const bool hasEspNowRssi = espnowStats.hasRssi;
     const String espnowRssiValue = hasEspNowRssi ? String(espnowStats.lastRssiDbm) : "null";
+    uint8_t activeBaseMac[6] = {};
+    const bool hasActiveBaseMac = espnowGetBaseMac(activeBaseMac);
+    char activeBaseMacText[18];
+    snprintf(activeBaseMacText, sizeof(activeBaseMacText), "%02X:%02X:%02X:%02X:%02X:%02X",
+             activeBaseMac[0], activeBaseMac[1], activeBaseMac[2],
+             activeBaseMac[3], activeBaseMac[4], activeBaseMac[5]);
 
     // 2. Đóng gói thành JSON
-    char healthPayload[1024];
+    char healthPayload[1280];
     snprintf(healthPayload, sizeof(healthPayload),
-             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"rssi_dbm\":%d,\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"espnow_rssi_dbm\":%s,\"gnss_data_ok\":%s,\"packets_received\":%lu,\"packets_wrong_source\":%lu,\"packets_invalid\":%lu,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_queue_hwm\":%lu,\"rtcm_duplicates\":%lu,\"rtcm_timeouts\":%lu,\"rtcm_sequence_gaps\":%lu,\"uart_write_errors\":%lu,\"ack_queued\":%lu,\"ack_send_fail\":%lu,\"last_rtcm_age_ms\":%lu}",
+             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"rssi_dbm\":%d,\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"base_mac\":\"%s\",\"base_mac_stored\":%s,\"pairing_active\":%s,\"pair_discovery_rx\":%lu,\"pair_response_tx\":%lu,\"pair_confirm_ok\":%lu,\"pair_auth_fail\":%lu,\"espnow_rssi_dbm\":%s,\"gnss_data_ok\":%s,\"packets_received\":%lu,\"packets_wrong_source\":%lu,\"packets_invalid\":%lu,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_queue_hwm\":%lu,\"rtcm_duplicates\":%lu,\"rtcm_timeouts\":%lu,\"rtcm_sequence_gaps\":%lu,\"uart_write_errors\":%lu,\"ack_queued\":%lu,\"ack_send_fail\":%lu,\"last_rtcm_age_ms\":%lu}",
              uptime_s, freeHeap, connected_via.c_str(), rssi,
              mqttOk ? "true" : "false",
              espnowIsReady() ? "true" : "false",
-             espnowBaseMacIsConfigured() ? "true" : "false",
+             hasActiveBaseMac ? "true" : "false",
+             hasActiveBaseMac ? activeBaseMacText : "",
+             espnowStats.hasStoredBaseMac ? "true" : "false",
+             espnowStats.pairingActive ? "true" : "false",
+             static_cast<unsigned long>(espnowStats.pairDiscoveryReceived),
+             static_cast<unsigned long>(espnowStats.pairResponsesSent),
+             static_cast<unsigned long>(espnowStats.pairConfirmsAccepted),
+             static_cast<unsigned long>(espnowStats.pairAuthFailures),
              espnowRssiValue.c_str(),
              gnssOk ? "true" : "false",
              static_cast<unsigned long>(espnowStats.packetsReceived),

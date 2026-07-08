@@ -53,15 +53,32 @@ inline constexpr char TOPIC_PUB_HEALTH[] = "tdm2402/um980/health";
 #define DEBUG_WEB_ENABLED 1
 #endif
 inline constexpr char DEBUG_WEB_AP_SSID[] = "ESP32-Rover-Debug";
-inline constexpr char DEBUG_WEB_AP_PASSWORD[] = "12345678";
+inline constexpr char DEBUG_WEB_AP_PASSWORD[] = "123456789";
 inline constexpr uint8_t DEBUG_WEB_AP_MAX_CLIENTS = 2;
 
 // ================= ESP-NOW =================
-// Provision the STA MAC of the Base before deployment. An all-zero MAC is rejected.
-inline constexpr uint8_t ESPNOW_BASE_MAC[6] = {0x68, 0x09, 0x47, 0xf8, 0x48, 0x90};
+// Base MAC is learned via pairing and stored in NVS/Preferences.
 inline constexpr std::size_t ESPNOW_QUEUE_LENGTH = 16;
 inline constexpr uint32_t RTCM_REASSEMBLY_TIMEOUT_MS = 1500;
 inline constexpr bool ESPNOW_USE_LR_250KBPS = true;
+// Enables Base RSSI display on the debug web page. Set false only if a client
+// has trouble joining the debug SoftAP.
+inline constexpr bool ESPNOW_RSSI_MONITOR_ENABLED = true;
+
+// ================= ESP-NOW PAIRING =================
+inline constexpr bool ESPNOW_PAIRING_ENABLED = true;
+inline constexpr int PAIRING_BUTTON_PIN = 0; // BOOT on many ESP32 boards; change to PCB pairing button.
+inline constexpr bool PAIRING_BUTTON_ACTIVE_LOW = true;
+inline constexpr uint32_t PAIRING_BUTTON_HOLD_MS = 1500;
+inline constexpr uint32_t PAIRING_WINDOW_MS = 60000;
+inline constexpr uint32_t PAIR_CONFIRM_TIMEOUT_MS = 3000;
+inline constexpr uint32_t ESPNOW_NETWORK_ID = 0xA1700001UL;
+inline constexpr uint8_t ESPNOW_PAIRING_KEY[16] = {
+    0x41, 0x49, 0x54, 0x4F, 0x47, 0x59, 0x5F, 0x50,
+    0x41, 0x49, 0x52, 0x5F, 0x56, 0x30, 0x30, 0x31,
+};
+inline constexpr char ESPNOW_NVS_NAMESPACE[] = "espnow";
+inline constexpr char ESPNOW_NVS_BASE_MAC_KEY[] = "base_mac";
 
 // Enable only after replacing both keys on Base and Rover with the same provisioned values.
 inline constexpr bool ESPNOW_ENCRYPTION_ENABLED = false;
@@ -73,12 +90,6 @@ inline constexpr uint8_t ESPNOW_LMK[16] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
-
-inline constexpr bool espnowBaseMacIsConfigured() {
-    return ESPNOW_BASE_MAC[0] != 0 || ESPNOW_BASE_MAC[1] != 0 ||
-           ESPNOW_BASE_MAC[2] != 0 || ESPNOW_BASE_MAC[3] != 0 ||
-           ESPNOW_BASE_MAC[4] != 0 || ESPNOW_BASE_MAC[5] != 0;
-}
 
 inline constexpr bool espnowSecurityKeysAreConfigured() {
     bool pmkConfigured = false;

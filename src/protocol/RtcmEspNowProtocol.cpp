@@ -1,5 +1,7 @@
 #include "protocol/RtcmEspNowProtocol.h"
 
+#include <cstddef>
+
 namespace rtcm_espnow {
 
 uint8_t expectedFragmentCount(uint16_t frameLength) {
@@ -55,6 +57,103 @@ bool validateFrameAck(const RtcmEspNowAck& ack, std::size_t receivedLength) {
            ack.version == VERSION &&
            ack.packetType == PACKET_TYPE_FRAME_ACK &&
            ack.status == ACK_STATUS_WRITTEN;
+}
+
+uint32_t computePairingAuthTag(const uint8_t* data,
+                               std::size_t lengthWithoutAuthTag,
+                               const uint8_t* pairingKey,
+                               std::size_t pairingKeyLength) {
+    if ((data == nullptr && lengthWithoutAuthTag != 0) ||
+        (pairingKey == nullptr && pairingKeyLength != 0)) {
+        return 0;
+    }
+
+    uint32_t hash = 2166136261UL;
+    for (std::size_t index = 0; index < lengthWithoutAuthTag; ++index) {
+        hash ^= data[index];
+        hash *= 16777619UL;
+    }
+    hash ^= 0x9E3779B9UL;
+    for (std::size_t index = 0; index < pairingKeyLength; ++index) {
+        hash ^= pairingKey[index];
+        hash *= 16777619UL;
+    }
+    return hash == 0 ? 0xFFFFFFFFUL : hash;
+}
+
+uint32_t pairingAuthTag(const PairDiscoveryPacket& packet,
+                        const uint8_t* pairingKey,
+                        std::size_t pairingKeyLength) {
+    return computePairingAuthTag(reinterpret_cast<const uint8_t*>(&packet),
+                                 offsetof(PairDiscoveryPacket, authTag),
+                                 pairingKey,
+                                 pairingKeyLength);
+}
+
+uint32_t pairingAuthTag(const PairResponsePacket& packet,
+                        const uint8_t* pairingKey,
+                        std::size_t pairingKeyLength) {
+    return computePairingAuthTag(reinterpret_cast<const uint8_t*>(&packet),
+                                 offsetof(PairResponsePacket, authTag),
+                                 pairingKey,
+                                 pairingKeyLength);
+}
+
+uint32_t pairingAuthTag(const PairConfirmPacket& packet,
+                        const uint8_t* pairingKey,
+                        std::size_t pairingKeyLength) {
+    return computePairingAuthTag(reinterpret_cast<const uint8_t*>(&packet),
+                                 offsetof(PairConfirmPacket, authTag),
+                                 pairingKey,
+                                 pairingKeyLength);
+}
+
+bool validatePairDiscovery(const PairDiscoveryPacket& packet,
+                           std::size_t receivedLength,
+                           uint32_t expectedNetworkId,
+                           const uint8_t* pairingKey,
+                           std::size_t pairingKeyLength) {
+    return receivedLength == sizeof(PairDiscoveryPacket) &&
+           packet.common.magic == MAGIC &&
+           packet.common.version == VERSION &&
+           packet.common.packetType == PACKET_TYPE_PAIR_DISCOVERY &&
+           packet.role == ROLE_BASE &&
+           packet.networkId == expectedNetworkId &&
+           packet.authTag == pairingAuthTag(packet, pairingKey, pairingKeyLength);
+}
+
+bool validatePairResponse(const PairResponsePacket& packet,
+                          std::size_t receivedLength,
+                          uint32_t expectedNetworkId,
+                          uint32_t expectedBaseNonce,
+                          const uint8_t* pairingKey,
+                          std::size_t pairingKeyLength) {
+    return receivedLength == sizeof(PairResponsePacket) &&
+           packet.common.magic == MAGIC &&
+           packet.common.version == VERSION &&
+           packet.common.packetType == PACKET_TYPE_PAIR_RESPONSE &&
+           packet.role == ROLE_ROVER &&
+           packet.networkId == expectedNetworkId &&
+           packet.baseNonceEcho == expectedBaseNonce &&
+           packet.authTag == pairingAuthTag(packet, pairingKey, pairingKeyLength);
+}
+
+bool validatePairConfirm(const PairConfirmPacket& packet,
+                         std::size_t receivedLength,
+                         uint32_t expectedNetworkId,
+                         uint32_t expectedBaseNonce,
+                         uint32_t expectedRoverNonce,
+                         const uint8_t* pairingKey,
+                         std::size_t pairingKeyLength) {
+    return receivedLength == sizeof(PairConfirmPacket) &&
+           packet.common.magic == MAGIC &&
+           packet.common.version == VERSION &&
+           packet.common.packetType == PACKET_TYPE_PAIR_CONFIRM &&
+           packet.role == ROLE_BASE &&
+           packet.networkId == expectedNetworkId &&
+           packet.baseNonce == expectedBaseNonce &&
+           packet.roverNonce == expectedRoverNonce &&
+           packet.authTag == pairingAuthTag(packet, pairingKey, pairingKeyLength);
 }
 
 uint32_t crc24q(const uint8_t* data, std::size_t length) {
