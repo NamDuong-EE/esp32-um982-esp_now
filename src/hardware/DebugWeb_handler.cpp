@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 
+#include "hardware/Relay_handler.h"
 #include "helper.h"
 
 namespace {
@@ -19,173 +20,147 @@ const IPAddress debugWebIp(192, 168, 4, 1);
 const IPAddress debugWebGateway(192, 168, 4, 1);
 const IPAddress debugWebSubnet(255, 255, 255, 0);
 
-const char INDEX_HTML[] PROGMEM = R"HTML(
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ESP32 Rover Debug</title>
-  <style>
-    :root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#1c2526;background:#f5f7f8}
-    body{margin:0;padding:20px}
-    main{max-width:760px;margin:0 auto}
-    h1{font-size:26px;margin:0 0 4px}
-    .sub{color:#607074;margin:0 0 20px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-    .card{background:#fff;border:1px solid #d9e1e3;border-radius:8px;padding:14px}
-    .label{font-size:12px;color:#68787c;text-transform:uppercase;letter-spacing:.04em}
-    .value{font-size:24px;font-weight:700;margin-top:6px;word-break:break-word}
-    .health{margin-top:16px}
-    table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #d9e1e3;border-radius:8px;overflow:hidden}
-    td{padding:10px 12px;border-bottom:1px solid #edf1f2}
-    td:last-child{text-align:right;font-weight:600}
-    tr:last-child td{border-bottom:0}
-    .ok{color:#087f5b}.warn{color:#b35c00}.bad{color:#c92a2a}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>ESP32 Rover Debug</h1>
-    <p class="sub">SoftAP 192.168.4.1</p>
-    <section class="grid">
-      <div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div>
-      <div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div>
-      <div class="card"><div class="label">RTK status</div><div id="rtk" class="value">--</div></div>
-      <div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div>
-      <div class="card"><div class="label">Base RSSI</div><div id="rssi" class="value">--</div></div>
-    </section>
-    <section class="health">
-      <table>
-        <tbody id="health"></tbody>
-      </table>
-    </section>
-  </main>
-  <script>
-    const fields = ["espnow_ready","base_provisioned","pairing_active","pair_confirm_ok","espnow_rssi_dbm","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
-    function text(value){return value === null || value === undefined ? "--" : value;}
-    function rssiClass(value){return value === null || value === undefined ? "bad" : value >= -65 ? "ok" : value >= -80 ? "warn" : "bad";}
-    async function refresh(){
-      try{
-        const response = await fetch("/api/status",{cache:"no-store"});
-        const data = await response.json();
-        document.getElementById("lat").textContent = data.gga.valid ? data.gga.lat.toFixed(7) : "--";
-        document.getElementById("lon").textContent = data.gga.valid ? data.gga.lon.toFixed(7) : "--";
-        document.getElementById("rtk").textContent = data.gga.valid ? data.gga.fix_quality : "--";
-        document.getElementById("rtk").className = "value " + (data.gga.fix_quality === 4 ? "ok" : data.gga.fix_quality === 5 ? "warn" : "bad");
-        document.getElementById("sats").textContent = data.gga.valid ? data.gga.satellites : "--";
-        document.getElementById("rssi").textContent = data.health.espnow_rssi_dbm === null ? "--" : `${data.health.espnow_rssi_dbm} dBm`;
-        document.getElementById("rssi").className = "value " + rssiClass(data.health.espnow_rssi_dbm);
-        document.getElementById("health").innerHTML = fields.map((key)=>`<tr><td>${key}</td><td>${text(data.health[key])}</td></tr>`).join("");
-      }catch(error){
-        document.getElementById("health").innerHTML = "<tr><td>status</td><td>offline</td></tr>";
-      }
+const char NORMAL_INDEX_HTML[] PROGMEM = R"HTML(
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 Rover Debug</title><style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#1c2526;background:#f5f7f8}body{margin:0;padding:20px}main{max-width:780px;margin:auto}h1{margin:0}.sub{color:#607074}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.card,table{background:#fff;border:1px solid #d9e1e3;border-radius:8px}.card{padding:14px}.label{font-size:12px;color:#68787c;text-transform:uppercase}.value{font-size:24px;font-weight:700;margin-top:6px}.health{margin-top:16px}table{width:100%;border-collapse:collapse;overflow:hidden}td{padding:10px 12px;border-bottom:1px solid #edf1f2}td:last-child{text-align:right;font-weight:600}.ok{color:#087f5b}.warn{color:#b35c00}.bad{color:#c92a2a}
+</style></head><body><main><h1>ESP32 Rover Debug</h1><p class="sub">Normal mode · 192.168.4.1</p>
+<section class="grid"><div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div><div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div><div class="card"><div class="label">RTK status</div><div id="rtk" class="value">--</div></div><div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div><div class="card"><div class="label">Base RSSI</div><div id="rssi" class="value">--</div></div></section>
+<section class="health"><table><tbody id="health"></tbody></table></section></main><script>
+const fields=["espnow_ready","base_provisioned","pairing_active","pair_confirm_ok","espnow_rssi_dbm","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
+const text=v=>v===null||v===undefined?"--":v;const rc=v=>v===null?"bad":v>=-65?"ok":v>=-80?"warn":"bad";
+async function refresh(){try{const d=await(await fetch('/api/status',{cache:'no-store'})).json();lat.textContent=d.gga.valid?d.gga.lat.toFixed(7):'--';lon.textContent=d.gga.valid?d.gga.lon.toFixed(7):'--';rtk.textContent=d.gga.valid?d.gga.fix_quality:'--';rtk.className='value '+(d.gga.fix_quality===4?'ok':d.gga.fix_quality===5?'warn':'bad');sats.textContent=d.gga.valid?d.gga.satellites:'--';rssi.textContent=d.health.espnow_rssi_dbm===null?'--':d.health.espnow_rssi_dbm+' dBm';rssi.className='value '+rc(d.health.espnow_rssi_dbm);health.innerHTML=fields.map(k=>`<tr><td>${k}</td><td>${text(d.health[k])}</td></tr>`).join('')}catch(e){health.innerHTML='<tr><td>status</td><td>offline</td></tr>'}}refresh();setInterval(refresh,1000);
+</script></body></html>)HTML";
+
+const char RELAY_INDEX_HTML[] PROGMEM = R"HTML(
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 Rover Relay</title><style>
+:root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#172126;background:#eef3f4}body{margin:0;padding:20px}main{max-width:960px;margin:auto}h1{margin:0}.sub{color:#607074}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:18px}.card,table{background:#fff;border:1px solid #d4dfe1;border-radius:8px}.card{padding:14px}.label{font-size:12px;color:#68787c;text-transform:uppercase}.value{font-size:22px;font-weight:700;margin-top:6px;word-break:break-word}.columns{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}h2{font-size:17px;margin:0 0 8px}table{width:100%;border-collapse:collapse;overflow:hidden}td{padding:9px 11px;border-bottom:1px solid #edf1f2}td:last-child{text-align:right;font-weight:600}.ok{color:#087f5b}.warn{color:#b35c00}.bad{color:#c92a2a}@media(max-width:700px){.columns{grid-template-columns:1fr}}
+</style></head><body><main><h1>ESP32 Rover Relay</h1><p class="sub">Relay mode · 192.168.4.1</p>
+<section class="grid"><div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div><div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div><div class="card"><div class="label">RTK status</div><div id="rtk" class="value">--</div></div><div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div></section>
+<div class="columns"><section><h2>Upstream · Base → Relay</h2><table><tbody id="upstream"></tbody></table></section><section><h2>Downstream · Relay → Child</h2><table><tbody id="downstream"></tbody></table></section></div></main><script>
+const up=["paired","mac","rssi_dbm","pairing_active","frames_received","crc_errors","queue_overflow","acks_sent","last_rtcm_age_ms"];
+const down=["paired","mac","rssi_dbm","pairing_active","frames_queued","frames_sent","frames_acked","fragments_sent","frame_retries","ack_timeouts","send_failures","frames_without_child","last_ack_age_ms"];
+const text=v=>v===null||v===undefined||v===''?'--':v;const rows=(o,keys)=>keys.map(k=>`<tr><td>${k}</td><td>${text(o[k])}</td></tr>`).join('');
+async function refresh(){try{const d=await(await fetch('/api/relay/status',{cache:'no-store'})).json();lat.textContent=d.device.gga_valid?d.device.lat.toFixed(7):'--';lon.textContent=d.device.gga_valid?d.device.lon.toFixed(7):'--';rtk.textContent=d.device.gga_valid?d.device.fix_quality:'--';rtk.className='value '+(d.device.fix_quality===4?'ok':d.device.fix_quality===5?'warn':'bad');sats.textContent=d.device.gga_valid?d.device.satellites:'--';upstream.innerHTML=rows(d.upstream,up);downstream.innerHTML=rows(d.downstream,down)}catch(e){upstream.innerHTML='<tr><td>status</td><td>offline</td></tr>';downstream.innerHTML=''}}refresh();setInterval(refresh,1000);
+</script></body></html>)HTML";
+
+String macText(const uint8_t mac[6], bool valid) {
+    if (!valid) {
+        return String();
     }
-    refresh();
-    setInterval(refresh,1000);
-  </script>
-</body>
-</html>
-)HTML";
+    char value[18];
+    snprintf(value, sizeof(value), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    return String(value);
+}
 
 const char* fixQualityToText(uint8_t fixQuality) {
     switch (fixQuality) {
-        case 1:
-            return "GPS Fix";
-        case 2:
-            return "DGPS";
-        case 4:
-            return "RTK Fixed";
-        case 5:
-            return "RTK Float";
-        default:
-            return "Invalid";
+        case 1: return "GPS Fix";
+        case 2: return "DGPS";
+        case 4: return "RTK Fixed";
+        case 5: return "RTK Float";
+        default: return "Invalid";
     }
 }
 
-void handleIndex() {
-    debugServer.send_P(200, "text/html", INDEX_HTML);
-}
-
-void handleStatus() {
-    const GgaDebugSnapshot gga = getGgaDebugSnapshot();
-    const EspNowRtcmStats espnowStats = espnowGetStats();
-    const uint32_t now = millis();
-    const bool hasRtcmFrame = espnowStats.lastValidFrameMillis != 0;
-    const bool hasRssi = espnowStats.hasRssi;
-    uint8_t activeBaseMac[6] = {};
-    const bool hasActiveBaseMac = espnowGetBaseMac(activeBaseMac);
-
-    String payload;
-    payload.reserve(1024);
-    payload += "{\"gga\":{";
+void appendGga(String& payload, const GgaDebugSnapshot& gga, uint32_t now) {
     payload += "\"valid\":";
     payload += gga.valid ? "true" : "false";
-    payload += ",\"lat\":";
-    payload += String(gga.lat, 7);
-    payload += ",\"lon\":";
-    payload += String(gga.lon, 7);
-    payload += ",\"fix_quality\":";
-    payload += String(gga.fixQuality);
-    payload += ",\"rtk_status\":\"";
-    payload += fixQualityToText(gga.fixQuality);
-    payload += "\",\"satellites\":";
-    payload += String(gga.satellites);
+    payload += ",\"lat\":" + String(gga.lat, 7);
+    payload += ",\"lon\":" + String(gga.lon, 7);
+    payload += ",\"fix_quality\":" + String(gga.fixQuality);
+    payload += ",\"rtk_status\":\"" + String(fixQualityToText(gga.fixQuality)) + "\"";
+    payload += ",\"satellites\":" + String(gga.satellites);
     payload += ",\"last_gga_age_ms\":";
     payload += gga.valid ? String(now - gga.lastUpdateMs) : "null";
-    payload += "},\"health\":{";
-    payload += "\"uptime_s\":";
-    payload += String(now / 1000U);
-    payload += ",\"free_heap_bytes\":";
-    payload += String(ESP.getFreeHeap());
-    payload += ",\"espnow_ready\":";
-    payload += espnowIsReady() ? "true" : "false";
-    payload += ",\"base_provisioned\":";
-    payload += hasActiveBaseMac ? "true" : "false";
-    payload += ",\"base_mac_stored\":";
-    payload += espnowStats.hasStoredBaseMac ? "true" : "false";
-    payload += ",\"pairing_active\":";
-    payload += espnowStats.pairingActive ? "true" : "false";
-    payload += ",\"pair_discovery_rx\":";
-    payload += String(espnowStats.pairDiscoveryReceived);
-    payload += ",\"pair_response_tx\":";
-    payload += String(espnowStats.pairResponsesSent);
-    payload += ",\"pair_confirm_ok\":";
-    payload += String(espnowStats.pairConfirmsAccepted);
-    payload += ",\"pair_auth_fail\":";
-    payload += String(espnowStats.pairAuthFailures);
-    payload += ",\"espnow_rssi_dbm\":";
-    payload += hasRssi ? String(espnowStats.lastRssiDbm) : "null";
-    payload += ",\"packets_received\":";
-    payload += String(espnowStats.packetsReceived);
-    payload += ",\"packets_wrong_source\":";
-    payload += String(espnowStats.packetsWrongSource);
-    payload += ",\"packets_invalid\":";
-    payload += String(espnowStats.packetsInvalidHeader);
-    payload += ",\"rtcm_frames\":";
-    payload += String(espnowStats.framesWritten);
-    payload += ",\"rtcm_crc_errors\":";
-    payload += String(espnowStats.crcErrors);
-    payload += ",\"rtcm_queue_overflow\":";
-    payload += String(espnowStats.queueOverflow);
-    payload += ",\"rtcm_queue_hwm\":";
-    payload += String(espnowStats.queueHighWater);
-    payload += ",\"rtcm_duplicates\":";
-    payload += String(espnowStats.duplicateFragments);
-    payload += ",\"rtcm_timeouts\":";
-    payload += String(espnowStats.frameTimeouts);
-    payload += ",\"rtcm_sequence_gaps\":";
-    payload += String(espnowStats.sequenceGaps);
-    payload += ",\"uart_write_errors\":";
-    payload += String(espnowStats.uartWriteErrors);
-    payload += ",\"ack_queued\":";
-    payload += String(espnowStats.ackPacketsQueued);
-    payload += ",\"ack_send_fail\":";
-    payload += String(espnowStats.ackSendFailures);
-    payload += ",\"last_rtcm_age_ms\":";
-    payload += hasRtcmFrame ? String(now - espnowStats.lastValidFrameMillis) : "null";
-    payload += "}}";
+}
 
+void handleNormalIndex() {
+    debugServer.send_P(200, "text/html", NORMAL_INDEX_HTML);
+}
+
+void handleRelayIndex() {
+    debugServer.send_P(200, "text/html", RELAY_INDEX_HTML);
+}
+
+void handleNormalStatus() {
+    const GgaDebugSnapshot gga = getGgaDebugSnapshot();
+    const EspNowRtcmStats s = espnowGetStats();
+    const uint32_t now = millis();
+    uint8_t baseMac[6] = {};
+    const bool hasBase = espnowGetBaseMac(baseMac);
+    String payload;
+    payload.reserve(1200);
+    payload = "{\"mode\":\"normal\",\"gga\":{";
+    appendGga(payload, gga, now);
+    payload += "},\"health\":{";
+    payload += "\"uptime_s\":" + String(now / 1000U);
+    payload += ",\"free_heap_bytes\":" + String(ESP.getFreeHeap());
+    payload += ",\"espnow_ready\":" + String(espnowIsReady() ? "true" : "false");
+    payload += ",\"base_provisioned\":" + String(hasBase ? "true" : "false");
+    payload += ",\"base_mac\":\"" + macText(baseMac, hasBase) + "\"";
+    payload += ",\"pairing_active\":" + String(s.pairingActive ? "true" : "false");
+    payload += ",\"pair_confirm_ok\":" + String(s.pairConfirmsAccepted);
+    payload += ",\"espnow_rssi_dbm\":" + String(s.hasRssi ? String(s.lastRssiDbm) : "null");
+    payload += ",\"rtcm_frames\":" + String(s.framesWritten);
+    payload += ",\"rtcm_crc_errors\":" + String(s.crcErrors);
+    payload += ",\"rtcm_queue_overflow\":" + String(s.queueOverflow);
+    payload += ",\"rtcm_sequence_gaps\":" + String(s.sequenceGaps);
+    payload += ",\"ack_queued\":" + String(s.ackPacketsQueued);
+    payload += ",\"ack_send_fail\":" + String(s.ackSendFailures);
+    payload += ",\"last_rtcm_age_ms\":";
+    payload += s.lastValidFrameMillis == 0 ? "null" : String(now - s.lastValidFrameMillis);
+    payload += "}}";
+    debugServer.send(200, "application/json", payload);
+}
+
+void handleRelayStatus() {
+    const GgaDebugSnapshot gga = getGgaDebugSnapshot();
+    const EspNowRtcmStats upstream = espnowGetStats();
+    const RelayStats downstream = relayGetStats();
+    const uint32_t now = millis();
+    uint8_t baseMac[6] = {};
+    uint8_t childMac[6] = {};
+    const bool hasBase = espnowGetBaseMac(baseMac);
+    const bool hasChild = relayGetChildMac(childMac);
+    String payload;
+    payload.reserve(1800);
+    payload = "{\"mode\":\"relay\",\"device\":{";
+    payload += "\"gga_valid\":" + String(gga.valid ? "true" : "false");
+    payload += ",\"lat\":" + String(gga.lat, 7);
+    payload += ",\"lon\":" + String(gga.lon, 7);
+    payload += ",\"fix_quality\":" + String(gga.fixQuality);
+    payload += ",\"satellites\":" + String(gga.satellites);
+    payload += ",\"uptime_s\":" + String(now / 1000U);
+    payload += "},\"upstream\":{";
+    payload += "\"paired\":" + String(hasBase ? "true" : "false");
+    payload += ",\"mac\":\"" + macText(baseMac, hasBase) + "\"";
+    payload += ",\"rssi_dbm\":" + String(upstream.hasRssi ? String(upstream.lastRssiDbm) : "null");
+    payload += ",\"pairing_active\":" + String(upstream.pairingActive ? "true" : "false");
+    payload += ",\"frames_received\":" + String(upstream.framesWritten);
+    payload += ",\"crc_errors\":" + String(upstream.crcErrors);
+    payload += ",\"queue_overflow\":" + String(upstream.queueOverflow);
+    payload += ",\"acks_sent\":" + String(upstream.ackPacketsQueued);
+    payload += ",\"last_rtcm_age_ms\":";
+    payload += upstream.lastValidFrameMillis == 0 ? "null" : String(now - upstream.lastValidFrameMillis);
+    payload += "},\"downstream\":{";
+    payload += "\"paired\":" + String(hasChild ? "true" : "false");
+    payload += ",\"mac\":\"" + macText(childMac, hasChild) + "\"";
+    payload += ",\"rssi_dbm\":" + String(downstream.hasChildRssi ? String(downstream.lastChildRssiDbm) : "null");
+    payload += ",\"pairing_active\":" + String(downstream.childPairingActive ? "true" : "false");
+    payload += ",\"frames_queued\":" + String(downstream.framesQueued);
+    payload += ",\"frames_sent\":" + String(downstream.framesSent);
+    payload += ",\"frames_acked\":" + String(downstream.framesAcked);
+    payload += ",\"fragments_sent\":" + String(downstream.fragmentsSent);
+    payload += ",\"frame_retries\":" + String(downstream.frameRetries);
+    payload += ",\"ack_timeouts\":" + String(downstream.ackTimeouts);
+    payload += ",\"send_failures\":" + String(downstream.sendFailures);
+    payload += ",\"frames_without_child\":" + String(downstream.framesWithoutChild);
+    payload += ",\"last_ack_age_ms\":";
+    payload += downstream.lastAckMillis == 0 ? "null" : String(now - downstream.lastAckMillis);
+    payload += "}}";
     debugServer.send(200, "application/json", payload);
 }
 
@@ -199,41 +174,36 @@ bool debugWebSetup() {
     if (debugWebReady) {
         return true;
     }
-
     WiFi.setTxPower(WIFI_POWER_19_5dBm);
     if (!WiFi.softAPConfig(debugWebIp, debugWebGateway, debugWebSubnet)) {
         Serial.println("[DEBUG_WEB][ERROR] Khong cau hinh duoc SoftAP IP");
         return false;
     }
-
-    const bool apStarted = WiFi.softAP(
-        DEBUG_WEB_AP_SSID,
-        DEBUG_WEB_AP_PASSWORD,
-        ESPNOW_WIFI_CHANNEL,
-        false,
-        DEBUG_WEB_AP_MAX_CLIENTS);
-    if (!apStarted) {
+    const char* ssid = ROVER_RELAY_MODE ? DEBUG_WEB_RELAY_AP_SSID : DEBUG_WEB_AP_SSID;
+    if (!WiFi.softAP(ssid, DEBUG_WEB_AP_PASSWORD, ESPNOW_WIFI_CHANNEL,
+                     false, DEBUG_WEB_AP_MAX_CLIENTS)) {
         Serial.println("[DEBUG_WEB][ERROR] Khong khoi dong duoc SoftAP");
         return false;
     }
     delay(100);
-
     const uint8_t apProtocols = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
     const esp_err_t protocolResult = esp_wifi_set_protocol(WIFI_IF_AP, apProtocols);
     if (protocolResult != ESP_OK) {
         Serial.printf("[DEBUG_WEB][WARN] Khong dat duoc AP protocol B/G/N: %d\n", protocolResult);
     }
-
-    debugServer.on("/", HTTP_GET, handleIndex);
-    debugServer.on("/api/status", HTTP_GET, handleStatus);
+    if constexpr (ROVER_RELAY_MODE) {
+        debugServer.on("/", HTTP_GET, handleRelayIndex);
+        debugServer.on("/api/relay/status", HTTP_GET, handleRelayStatus);
+    } else {
+        debugServer.on("/", HTTP_GET, handleNormalIndex);
+        debugServer.on("/api/status", HTTP_GET, handleNormalStatus);
+    }
     debugServer.onNotFound(handleNotFound);
     debugServer.begin();
-
     debugWebReady = true;
-    Serial.printf("[DEBUG_WEB] SoftAP SSID=%s IP=%s channel=%u MAC=%s\n",
-                  DEBUG_WEB_AP_SSID,
-                  WiFi.softAPIP().toString().c_str(),
-                  ESPNOW_WIFI_CHANNEL,
+    Serial.printf("[DEBUG_WEB] mode=%s SSID=%s IP=%s channel=%u MAC=%s\n",
+                  ROVER_RELAY_MODE ? "relay" : "normal", ssid,
+                  WiFi.softAPIP().toString().c_str(), ESPNOW_WIFI_CHANNEL,
                   WiFi.softAPmacAddress().c_str());
     return true;
 }
@@ -246,10 +216,7 @@ void debugWebLoop() {
 
 #else
 
-bool debugWebSetup() {
-    return false;
-}
-
+bool debugWebSetup() { return false; }
 void debugWebLoop() {}
 
 #endif

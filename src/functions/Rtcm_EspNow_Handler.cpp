@@ -5,6 +5,7 @@
 
 #include "Prog_Config.h"
 #include "hardware/Espnow_handler.h"
+#include "hardware/Relay_handler.h"
 #include "protocol/RtcmEspNowProtocol.h"
 
 extern SemaphoreHandle_t gnssTxMutex;
@@ -177,6 +178,12 @@ bool processNextRtcmEspNowPacket(TickType_t waitTicks) {
 
     recordSequenceGap(streamId, sequence);
     espnowRecordFrameWritten();
+    if constexpr (ROVER_RELAY_MODE) {
+        // Downstream delivery is intentionally independent from the upstream
+        // ACK. A missing/unpaired child must not make the Base rewrite RTCM to
+        // this Rover's UART.
+        relayQueueFrame(state.frame, state.frameLength, streamId, sequence);
+    }
     clearActiveFrame();
     espnowSendFrameAck(streamId, sequence);
     return true;

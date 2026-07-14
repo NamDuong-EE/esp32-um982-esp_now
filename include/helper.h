@@ -11,6 +11,7 @@
 #include "functions/NMEA_Parser.h"
 #include "functions/Rtcm_EspNow_Handler.h"
 #include "hardware/Espnow_handler.h"
+#include "hardware/Relay_handler.h"
 #include "hardware/Wifi_handler.h"
 
 extern String latestGGA;

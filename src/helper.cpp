@@ -164,6 +164,36 @@ String formDeviceHealthString()
              static_cast<unsigned long>(espnowStats.ackPacketsQueued),
              static_cast<unsigned long>(espnowStats.ackSendFailures),
              static_cast<unsigned long>(frameAgeMs));
-    // 3. Trả về payload để có thể log hoặc dùng cho mục đích khác nếu cần
-    return String(healthPayload);
+    // 3. Relay mode appends downstream health without changing the normal-mode
+    // payload contract.
+    String payload(healthPayload);
+    if constexpr (ROVER_RELAY_MODE) {
+        const RelayStats relay = relayGetStats();
+        uint8_t childMac[6] = {};
+        const bool hasChild = relayGetChildMac(childMac);
+        char childMacText[18] = {};
+        if (hasChild) {
+            snprintf(childMacText, sizeof(childMacText), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     childMac[0], childMac[1], childMac[2],
+                     childMac[3], childMac[4], childMac[5]);
+        }
+        if (payload.endsWith("}")) {
+            payload.remove(payload.length() - 1);
+        }
+        payload += ",\"mode\":\"relay\"";
+        payload += ",\"child_provisioned\":" + String(hasChild ? "true" : "false");
+        payload += ",\"child_mac\":\"" + String(childMacText) + "\"";
+        payload += ",\"child_pairing_active\":" + String(relay.childPairingActive ? "true" : "false");
+        payload += ",\"child_rssi_dbm\":" + String(relay.hasChildRssi ? String(relay.lastChildRssiDbm) : "null");
+        payload += ",\"relay_frames_queued\":" + String(relay.framesQueued);
+        payload += ",\"relay_frames_sent\":" + String(relay.framesSent);
+        payload += ",\"relay_frames_acked\":" + String(relay.framesAcked);
+        payload += ",\"relay_retries\":" + String(relay.frameRetries);
+        payload += ",\"relay_ack_timeouts\":" + String(relay.ackTimeouts);
+        payload += ",\"relay_queue_depth\":" + String(relay.queueDepth);
+        payload += ",\"relay_queue_overflow\":" + String(relay.queueOverflow);
+        payload += ",\"relay_send_failures\":" + String(relay.sendFailures);
+        payload += "}";
+    }
+    return payload;
 }

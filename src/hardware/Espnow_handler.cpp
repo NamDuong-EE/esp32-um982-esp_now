@@ -15,12 +15,14 @@
 #endif
 
 #include "Prog_Config.h"
+#include "hardware/Relay_handler.h"
 #include "hardware/Wifi_handler.h"
 
 namespace {
 
 QueueHandle_t receiveQueue = nullptr;
 bool ready = false;
+bool rssiMonitorReady = false;
 EspNowRtcmStats stats{};
 portMUX_TYPE statsMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE pairingMux = portMUX_INITIALIZER_UNLOCKED;
@@ -150,6 +152,8 @@ void onPromiscuousPacket(void* buffer, wifi_promiscuous_pkt_type_t type) {
     const uint8_t* sourceMac = packet->payload + IEEE80211_ADDR2_OFFSET;
     if (isExpectedRuntimeBase(sourceMac)) {
         recordRssi(static_cast<int8_t>(packet->rx_ctrl.rssi));
+    } else if constexpr (ROVER_RELAY_MODE) {
+        relayRecordChildRssi(sourceMac, static_cast<int8_t>(packet->rx_ctrl.rssi));
     }
 }
 
@@ -318,6 +322,12 @@ void handleReceivedPacket(const uint8_t* sourceMac, const uint8_t* data, int len
         return;
     }
 
+    if constexpr (ROVER_RELAY_MODE) {
+        if (relayHandleReceivedPacket(sourceMac, data, length)) {
+            return;
+        }
+    }
+
     if (common.packetType == rtcm_espnow::PACKET_TYPE_PAIR_DISCOVERY) {
         if (handlePairDiscovery(sourceMac, data, length)) {
             return;
@@ -366,6 +376,9 @@ void onDataReceived(const uint8_t* sourceMac, const uint8_t* data, int length) {
 #endif
 
 void setupRssiMonitor() {
+    if (rssiMonitorReady) {
+        return;
+    }
     wifi_promiscuous_filter_t filter{};
     filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
 
@@ -387,6 +400,7 @@ void setupRssiMonitor() {
         return;
     }
 
+    rssiMonitorReady = true;
     Serial.println("[ESP-NOW] RSSI monitor enabled for Base MAC");
 }
 
@@ -428,6 +442,9 @@ void commitPendingPairSave() {
     if (!configurePeer(getWiFiChannel())) {
         Serial.println("[PAIR][ERROR] Cau hinh peer Base sau pairing that bai");
         return;
+    }
+    if constexpr (DEBUG_WEB_ENABLED && ESPNOW_RSSI_MONITOR_ENABLED) {
+        setupRssiMonitor();
     }
     Serial.println("[PAIR] Saved Base MAC to NVS and switched runtime peer to " + macToString(activeBaseMac));
 }
@@ -607,7 +624,11 @@ bool espnowSetup() {
         return false;
     }
     if constexpr (DEBUG_WEB_ENABLED && ESPNOW_RSSI_MONITOR_ENABLED) {
-        setupRssiMonitor();
+        if (hasActiveBaseMac) {
+            setupRssiMonitor();
+        } else {
+            Serial.println("[ESP-NOW] RSSI monitor deferred until pairing completes");
+        }
     } else if constexpr (DEBUG_WEB_ENABLED) {
         Serial.println("[ESP-NOW] RSSI monitor disabled while debug web is enabled");
     }
@@ -647,7 +668,8 @@ void espnowLoop() {
         const bool pressed = PAIRING_BUTTON_ACTIVE_LOW ? !rawLevel : rawLevel;
         const uint32_t now = millis();
 
-        if (pressed) {
+        const bool upstreamButtonOwnsPress = !ROVER_RELAY_MODE || !hasActiveBaseMac;
+        if (pressed && upstreamButtonOwnsPress) {
             if (pressedSinceMs == 0) {
                 pressedSinceMs = now;
             } else if (!pairingStartHandled &&
@@ -655,7 +677,7 @@ void espnowLoop() {
                 startPairingMode();
                 pairingStartHandled = true;
             }
-        } else {
+        } else if (!pressed) {
             pressedSinceMs = 0;
             pairingStartHandled = false;
         }

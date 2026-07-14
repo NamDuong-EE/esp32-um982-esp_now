@@ -18,6 +18,14 @@ inline constexpr int LED_PIN = 2;
 inline constexpr uint32_t MUTEX_TIMEOUT_MS = 1500;
 inline constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
 
+// ================= OPERATING MODE =================
+// Override from PlatformIO with -D ROVER_RELAY_MODE_ENABLED=1 to build the
+// intermediate Rover. Normal mode remains the safe default.
+#ifndef ROVER_RELAY_MODE_ENABLED
+#define ROVER_RELAY_MODE_ENABLED 0
+#endif
+inline constexpr bool ROVER_RELAY_MODE = ROVER_RELAY_MODE_ENABLED != 0;
+
 // ================= WI-FI / MQTT =================
 // ESP-NOW still uses the ESP32 Wi-Fi radio in STA mode, but field mode does
 // not connect to a router/AP and does not use MQTT by default.
@@ -46,13 +54,14 @@ inline constexpr char TOPIC_PUB_RAW_GGA[] = "tdm2402/um980/raw/gga";
 inline constexpr char TOPIC_PUB_RAW_KSXT[] = "tdm2402/um980/raw/ksxt";
 inline constexpr char TOPIC_PUB_HEALTH[] = "tdm2402/um980/health";
 
-// ================= DEBUG WEB =================
+// ================= DEBUG   =================
 // Disabled by default for field operation. Set to 1 to compile and host a
 // simple SoftAP debug page at http://192.168.4.1 on the ESP-NOW channel.
 #ifndef DEBUG_WEB_ENABLED
 #define DEBUG_WEB_ENABLED 1
 #endif
 inline constexpr char DEBUG_WEB_AP_SSID[] = "ESP32-Rover-Debug";
+inline constexpr char DEBUG_WEB_RELAY_AP_SSID[] = "ESP32-Rover-Relay";
 inline constexpr char DEBUG_WEB_AP_PASSWORD[] = "123456789";
 inline constexpr uint8_t DEBUG_WEB_AP_MAX_CLIENTS = 2;
 
@@ -79,6 +88,18 @@ inline constexpr uint8_t ESPNOW_PAIRING_KEY[16] = {
 };
 inline constexpr char ESPNOW_NVS_NAMESPACE[] = "espnow";
 inline constexpr char ESPNOW_NVS_BASE_MAC_KEY[] = "base_mac";
+
+// ================= RELAY / DOWNSTREAM CHILD =================
+// Relay mode uses the same physical pairing button. If no Base is stored the
+// button opens upstream pairing; after Base provisioning it opens child pairing.
+inline constexpr char ESPNOW_NVS_CHILD_MAC_KEY[] = "child_mac";
+inline constexpr std::size_t RELAY_QUEUE_LENGTH = 3;
+inline constexpr uint32_t RELAY_ACK_TIMEOUT_MS = 300;
+inline constexpr uint32_t RELAY_SEND_CALLBACK_TIMEOUT_MS = 100;
+inline constexpr uint8_t RELAY_FRAME_RETRY_COUNT = 2;
+inline constexpr uint8_t RELAY_FRAGMENT_SEND_RETRY_COUNT = 2;
+inline constexpr uint32_t RELAY_FRAGMENT_GAP_MS = 5;
+inline constexpr uint32_t RELAY_DISCOVERY_INTERVAL_MS = 500;
 
 // Enable only after replacing both keys on Base and Rover with the same provisioned values.
 inline constexpr bool ESPNOW_ENCRYPTION_ENABLED = false;

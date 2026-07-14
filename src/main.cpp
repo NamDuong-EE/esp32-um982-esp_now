@@ -1,5 +1,6 @@
 #include "helper.h"
 #include "hardware/DebugWeb_handler.h"
+#include "hardware/Relay_handler.h"
 
 extern PubSubClient mqtt;
 
@@ -15,6 +16,7 @@ void taskRtcm(void* parameter);
 void gnssParseTask(void* parameter);
 void gnssPublishTask(void* parameter);
 void healthCheckTask(void* parameter);
+void relaySendTask(void* parameter);
 
 namespace {
 
@@ -82,6 +84,11 @@ void setup() {
     if (!espnowSetup()) {
         Serial.println("[SETUP][WARN] ESP-NOW chua hoat dong; hay pair voi Base");
     }
+    if constexpr (ROVER_RELAY_MODE) {
+        if (!relaySetup()) {
+            Serial.println("[SETUP][WARN] Relay downstream chua san sang");
+        }
+    }
     if constexpr (DEBUG_WEB_ENABLED) {
         if (!debugWebSetup()) {
             Serial.println("[SETUP][WARN] Debug web chua hoat dong");
@@ -100,6 +107,9 @@ void setup() {
     createRequiredTask(gnssParseTask, "GNSS Parse", 4096, 3, 0);
     createRequiredTask(gnssPublishTask, "GNSS Publish", 4096, 2, 0);
     createRequiredTask(healthCheckTask, "Health", 4096, 1, 1);
+    if constexpr (ROVER_RELAY_MODE) {
+        createRequiredTask(relaySendTask, "RTCM Relay", 4096, 3, 1);
+    }
 
     digitalWrite(LED_PIN, LOW);
     Serial.println("[SETUP] Khoi dong hoan tat");
@@ -187,6 +197,17 @@ void healthCheckTask(void* parameter) {
     }
 }
 
+void relaySendTask(void* parameter) {
+    (void)parameter;
+    while (true) {
+        if (!relayIsReady()) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+        relayProcessNextFrame(pdMS_TO_TICKS(100));
+    }
+}
+
 void loop() {
     static bool wasConnected = true;
     static uint32_t lastEspNowRetry = 0;
@@ -212,6 +233,11 @@ void loop() {
         lastEspNowRetry = millis();
         espnowSetup();
     }
+    if constexpr (ROVER_RELAY_MODE) {
+        if (espnowIsReady() && !relayIsReady()) {
+            relaySetup();
+        }
+    }
 
     if constexpr (ROVER_MQTT_ENABLED) {
         if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
@@ -226,5 +252,8 @@ void loop() {
         debugWebLoop();
     }
     espnowLoop();
+    if constexpr (ROVER_RELAY_MODE) {
+        relayLoop();
+    }
     vTaskDelay(pdMS_TO_TICKS(100));
 }
