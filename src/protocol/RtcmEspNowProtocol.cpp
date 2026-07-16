@@ -59,6 +59,16 @@ bool validateFrameAck(const RtcmEspNowAck& ack, std::size_t receivedLength) {
            ack.status == ACK_STATUS_WRITTEN;
 }
 
+bool validateRoverLlhStatus(const RoverLlhStatusPacket& packet,
+                            std::size_t receivedLength) {
+    return receivedLength == sizeof(RoverLlhStatusPacket) &&
+           packet.common.magic == MAGIC &&
+           packet.common.version == VERSION &&
+           packet.common.packetType == PACKET_TYPE_ROVER_LLH_STATUS &&
+           packet.latitudeE7 >= -900000000 && packet.latitudeE7 <= 900000000 &&
+           packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000;
+}
+
 uint32_t computePairingAuthTag(const uint8_t* data,
                                std::size_t lengthWithoutAuthTag,
                                const uint8_t* pairingKey,

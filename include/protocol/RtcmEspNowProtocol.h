@@ -13,9 +13,12 @@ inline constexpr uint8_t PACKET_TYPE_FRAME_ACK = 2;
 inline constexpr uint8_t PACKET_TYPE_PAIR_DISCOVERY = 3;
 inline constexpr uint8_t PACKET_TYPE_PAIR_RESPONSE = 4;
 inline constexpr uint8_t PACKET_TYPE_PAIR_CONFIRM = 5;
+inline constexpr uint8_t PACKET_TYPE_ROVER_LLH_STATUS = 6;
 inline constexpr uint8_t ROLE_BASE = 1;
 inline constexpr uint8_t ROLE_ROVER = 2;
 inline constexpr uint8_t ACK_STATUS_WRITTEN = 1;
+inline constexpr double LLH_COORDINATE_SCALE = 10000000.0;
+inline constexpr double LLH_HEIGHT_SCALE = 1000.0;
 inline constexpr std::size_t ESPNOW_V1_MAX_PACKET_SIZE = 250;
 inline constexpr std::size_t MAX_RTCM_FRAME_SIZE = 1029;
 inline constexpr std::size_t MIN_RTCM_FRAME_SIZE = 6;
@@ -49,6 +52,16 @@ struct RtcmEspNowAck {
     uint32_t frameSequence;
     uint8_t status;
     uint8_t reserved;
+};
+
+// Stage 1 reverse telemetry uses fixed-point values derived from the Rover's
+// parsed GGA snapshot. Source MAC identifies the Rover at the Base.
+struct RoverLlhStatusPacket {
+    EspNowCommonHeader common;
+    uint32_t sequence;
+    int32_t latitudeE7;
+    int32_t longitudeE7;
+    int32_t heightMm;
 };
 
 struct PairDiscoveryPacket {
@@ -87,6 +100,7 @@ struct PairConfirmPacket {
 static_assert(sizeof(EspNowCommonHeader) == 4, "ESP-NOW common header must be 4 bytes");
 static_assert(sizeof(RtcmEspNowHeader) == 16, "RTCM ESP-NOW header must be 16 bytes");
 static_assert(sizeof(RtcmEspNowAck) == 12, "RTCM ESP-NOW ACK must be 12 bytes");
+static_assert(sizeof(RoverLlhStatusPacket) == 20, "ROVER_LLH_STATUS must be 20 bytes");
 static_assert(sizeof(PairDiscoveryPacket) == 28, "PAIR_DISCOVERY must be 28 bytes");
 static_assert(sizeof(PairResponsePacket) == 28, "PAIR_RESPONSE must be 28 bytes");
 static_assert(sizeof(PairConfirmPacket) == 24, "PAIR_CONFIRM must be 24 bytes");
@@ -97,6 +111,8 @@ uint8_t expectedFragmentCount(uint16_t frameLength);
 uint16_t expectedFragmentPayloadLength(uint16_t frameLength, uint8_t fragmentIndex);
 bool validatePacketHeader(const RtcmEspNowHeader& header, std::size_t receivedLength);
 bool validateFrameAck(const RtcmEspNowAck& ack, std::size_t receivedLength);
+bool validateRoverLlhStatus(const RoverLlhStatusPacket& packet,
+                            std::size_t receivedLength);
 
 uint32_t computePairingAuthTag(const uint8_t* data,
                                std::size_t lengthWithoutAuthTag,

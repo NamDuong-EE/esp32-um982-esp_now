@@ -8,6 +8,7 @@ enum class EspNowTxResult : uint8_t {
     Success = 0,
     NotReady,
     InvalidArgument,
+    Busy,
     MutexTimeout,
     QueueError,
     CallbackTimeout,
@@ -18,6 +19,9 @@ bool espnowTxSetup();
 EspNowTxResult espnowTxSend(const uint8_t destinationMac[6],
                             const uint8_t* data,
                             std::size_t length);
+EspNowTxResult espnowTxTrySend(const uint8_t destinationMac[6],
+                               const uint8_t* data,
+                               std::size_t length);
 const char* espnowTxResultToString(EspNowTxResult result);
 
 #endif

@@ -35,7 +35,7 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - [ ] Provision PMK/LMK và bật `ESPNOW_ENCRYPTION_ENABLED` khi triển khai bảo mật.
 - [ ] Kiểm thử end-to-end với Base repo riêng + ESP32U Rover + UM980/982.
 - [ ] Kiểm thử phần cứng topology `Base → Relay Rover → Child Rover`, gồm pairing, reset nguồn, retry và mất liên kết downstream.
-- [ ] thêm tính năng gửi lat/lon/high ngược lại cho base để base cập nhật trạng thái của rover lên server
+- [x] Triển khai giai đoạn 1 telemetry ngược `Rover → Base`: gửi LLH từ GGA ở 1 Hz, Base chỉ giữ trạng thái mới nhất trong RAM; chưa chuyển tiếp qua Relay và chưa gửi server.
 ## Kiến trúc Rover
 
 ### ESP-NOW field mode
@@ -48,6 +48,33 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - Rover chỉ nhận packet runtime từ MAC Base đã pair và lưu trong NVS/Preferences.
 - Kiến trúc pairing động đã thống nhất với Base theo hướng broadcast discovery bằng nút vật lý, sau đó lưu MAC và chuyển sang unicast.
 - Trạng thái/health mặc định chỉ log ra Serial USB.
+
+### Telemetry Rover → Base (giai đoạn 1, đã triển khai)
+
+Mục tiêu của phiên bản đầu tiên là để một Rover thường gửi trạng thái GNSS ngược về Base đã pair. Relay và Rover con chưa tham gia luồng telemetry này; sau khi liên kết trực tiếp được kiểm thử ổn định mới bổ sung `Child Rover → Relay → Base`.
+
+```text
+UM980/982 Rover ── GGA ──> ESP32 Rover
+                              │
+                              │ ROVER_LLH_STATUS unicast · 1 Hz
+                              ▼
+ESP32 Base ── latest state trong RAM
+```
+
+Nguyên tắc hiện tại:
+
+1. Packet runtime `ROVER_LLH_STATUS` (type `6`, 20 byte) độc lập với `RTCM_DATA` và `FRAME_ACK` hiện tại.
+2. Rover gửi tối đa 1 packet mỗi giây tới đúng `base_mac` đã pair. Telemetry có ưu tiên thấp hơn pairing và RTCM ACK; nếu TX manager đang bận thì có thể bỏ lần gửi hiện tại, không retry vì packet kế tiếp sẽ thay thế sau một giây.
+3. Packet dùng fixed-point `int32_t`: latitude/longitude nhân `10^7`, height đổi từ mét sang millimetre. Base chia lại theo cùng hệ số khi sử dụng. `height` hiện là altitude MSL ở trường 9 của GGA.
+4. Chỉ Rover Normal tạo task gửi LLH. Firmware Relay không gửi và chưa chuyển tiếp LLH của Rover con trong giai đoạn này.
+5. Callback ESP-NOW phía Base chỉ kiểm tra source MAC/length/magic/version rồi copy packet vào một slot RAM tương ứng Rover; không tạo JSON, gọi MQTT hoặc ghi flash trong callback Wi-Fi.
+6. Base giữ đúng một bản ghi mới nhất cho mỗi Rover trong RAM và packet mới ghi đè packet cũ. Trạng thái này không được ghi NVS/flash. Khi Base restart, RAM bị xóa nhưng Rover sẽ gửi lại trong tối đa một giây.
+7. NVS của Base tiếp tục chỉ lưu dữ liệu provisioning cần tồn tại qua restart như danh sách MAC Rover đã pair; không dùng NVS để lưu lịch sử LLH 1 Hz.
+8. Base xác định Rover trực tiếp bằng source MAC đã pair và log snapshot mới bằng `[BASE][ROVER_LLH]`. Việc đưa snapshot lên MQTT/server thuộc giai đoạn tiếp theo.
+9. Health Rover có `llh_status_sent`, `llh_status_skipped`, `llh_status_failures`; health Base có `llh_rx`, `llh_invalid`, `llh_unknown`.
+10. Cần kiểm thử packet loss, ACK/RTCM sequence gap và send callback trên phần cứng trước khi mở rộng telemetry qua Relay.
+
+Với packet 20 byte ở 1 Hz, ngay cả năm Rover cũng chỉ tạo tải payload 800 bps trước overhead, nhỏ so với PHY LR 250 Kbps. Mục tiêu vẫn là bảo vệ RTCM: pairing và ACK luôn có ưu tiên cao hơn telemetry.
 
 Luồng khởi tạo:
 

@@ -16,6 +16,7 @@ void taskRtcm(void* parameter);
 void gnssParseTask(void* parameter);
 void gnssPublishTask(void* parameter);
 void healthCheckTask(void* parameter);
+void roverLlhStatusTask(void* parameter);
 void relaySendTask(void* parameter);
 
 namespace {
@@ -115,6 +116,9 @@ void setup() {
     createRequiredTask(gnssParseTask, "GNSS Parse", 4096, 3, 0);
     createRequiredTask(gnssPublishTask, "GNSS Publish", 4096, 2, 0);
     createRequiredTask(healthCheckTask, "Health", 4096, 1, 1);
+    if constexpr (!ROVER_RELAY_MODE) {
+        createRequiredTask(roverLlhStatusTask, "LLH Status", 3072, 1, 1);
+    }
     if constexpr (ROVER_RELAY_MODE) {
         createRequiredTask(relaySendTask, "RTCM Relay", 4096, 3, 1);
     }
@@ -209,6 +213,28 @@ void healthCheckTask(void* parameter) {
         Serial.print("[DEBUG_STATUS] ");
         Serial.println(formSerialDebugStatusString());
         vTaskDelay(pdMS_TO_TICKS(SERIAL_DEBUG_STATUS_INTERVAL_MS));
+    }
+}
+
+void roverLlhStatusTask(void* parameter) {
+    (void)parameter;
+    TickType_t lastWake = xTaskGetTickCount();
+    while (true) {
+        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(ROVER_LLH_STATUS_INTERVAL_MS));
+        if (!espnowIsReady()) {
+            continue;
+        }
+
+        const EspNowRtcmStats stats = espnowGetStats();
+        if (stats.pairingActive) {
+            continue;
+        }
+        const uint32_t now = millis();
+        const GgaDebugSnapshot gga = getGgaDebugSnapshot();
+        if (!gga.valid || now - gga.lastUpdateMs > ROVER_LLH_MAX_GGA_AGE_MS) {
+            continue;
+        }
+        espnowTrySendRoverLlhStatus(gga.lat, gga.lon, gga.heightM);
     }
 }
 

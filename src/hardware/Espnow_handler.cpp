@@ -5,8 +5,10 @@
 #include <esp_now.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 
 #if __has_include(<esp_arduino_version.h>)
 #include <esp_arduino_version.h>
@@ -866,6 +868,73 @@ bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence) {
         return false;
     }
     updateCounter(&EspNowRtcmStats::ackPacketsQueued);
+    return true;
+}
+
+bool espnowTrySendRoverLlhStatus(double latitude,
+                                 double longitude,
+                                 double heightM) {
+    static uint32_t statusSequence = 0;
+    if (!ready || !hasActiveBaseMac || ROVER_RELAY_MODE) {
+        updateCounter(&EspNowRtcmStats::llhStatusSkipped);
+        return false;
+    }
+
+    constexpr double minHeightM =
+        static_cast<double>(std::numeric_limits<int32_t>::min()) /
+        rtcm_espnow::LLH_HEIGHT_SCALE;
+    constexpr double maxHeightM =
+        static_cast<double>(std::numeric_limits<int32_t>::max()) /
+        rtcm_espnow::LLH_HEIGHT_SCALE;
+    if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
+        !std::isfinite(heightM) || latitude < -90.0 || latitude > 90.0 ||
+        longitude < -180.0 || longitude > 180.0 ||
+        heightM < minHeightM || heightM > maxHeightM) {
+        updateCounter(&EspNowRtcmStats::llhStatusFailures);
+        return false;
+    }
+
+    rtcm_espnow::RoverLlhStatusPacket packet{};
+    packet.common.magic = rtcm_espnow::MAGIC;
+    packet.common.version = rtcm_espnow::VERSION;
+    packet.common.packetType = rtcm_espnow::PACKET_TYPE_ROVER_LLH_STATUS;
+    packet.sequence = statusSequence++;
+    packet.latitudeE7 = static_cast<int32_t>(
+        std::llround(latitude * rtcm_espnow::LLH_COORDINATE_SCALE));
+    packet.longitudeE7 = static_cast<int32_t>(
+        std::llround(longitude * rtcm_espnow::LLH_COORDINATE_SCALE));
+    packet.heightMm = static_cast<int32_t>(
+        std::llround(heightM * rtcm_espnow::LLH_HEIGHT_SCALE));
+    if (!rtcm_espnow::validateRoverLlhStatus(packet, sizeof(packet))) {
+        updateCounter(&EspNowRtcmStats::llhStatusFailures);
+        return false;
+    }
+
+    const EspNowTxResult result = espnowTxTrySend(
+        activeBaseMac,
+        reinterpret_cast<const uint8_t*>(&packet),
+        sizeof(packet));
+    if (result == EspNowTxResult::Busy) {
+        updateCounter(&EspNowRtcmStats::llhStatusSkipped);
+        return false;
+    }
+    if (result != EspNowTxResult::Success) {
+        updateCounter(&EspNowRtcmStats::llhStatusFailures);
+        Serial.printf("[ROVER][LLH_TX][WARN] seq=%lu result=%s\n",
+                      static_cast<unsigned long>(packet.sequence),
+                      espnowTxResultToString(result));
+        return false;
+    }
+
+    updateCounter(&EspNowRtcmStats::llhStatusSent);
+    Serial.printf("[ROVER][LLH_TX] seq=%lu lat=%.7f lon=%.7f height_m=%.3f\n",
+                  static_cast<unsigned long>(packet.sequence),
+                  static_cast<double>(packet.latitudeE7) /
+                      rtcm_espnow::LLH_COORDINATE_SCALE,
+                  static_cast<double>(packet.longitudeE7) /
+                      rtcm_espnow::LLH_COORDINATE_SCALE,
+                  static_cast<double>(packet.heightMm) /
+                      rtcm_espnow::LLH_HEIGHT_SCALE);
     return true;
 }
 

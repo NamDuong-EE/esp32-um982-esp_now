@@ -18,6 +18,8 @@ inline constexpr int LED_PIN = 2;
 inline constexpr uint32_t MUTEX_TIMEOUT_MS = 1500;
 inline constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
 inline constexpr uint32_t SERIAL_DEBUG_STATUS_INTERVAL_MS = 1000;
+inline constexpr uint32_t ROVER_LLH_STATUS_INTERVAL_MS = 1000;
+inline constexpr uint32_t ROVER_LLH_MAX_GGA_AGE_MS = 3000;
 
 // ================= OPERATING MODE =================
 // Override from PlatformIO with -D ROVER_RELAY_MODE_ENABLED=1 to build the

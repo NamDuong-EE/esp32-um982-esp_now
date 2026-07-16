@@ -229,7 +229,7 @@ String formDeviceHealthString()
     // 2. Đóng gói thành JSON
     char healthPayload[1280];
     snprintf(healthPayload, sizeof(healthPayload),
-             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"base_mac\":\"%s\",\"base_mac_stored\":%s,\"pairing_active\":%s,\"pair_discovery_rx\":%lu,\"pair_response_tx\":%lu,\"pair_confirm_ok\":%lu,\"pair_auth_fail\":%lu,\"gnss_data_ok\":%s,\"packets_received\":%lu,\"packets_wrong_source\":%lu,\"packets_invalid\":%lu,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_queue_hwm\":%lu,\"rtcm_duplicates\":%lu,\"rtcm_timeouts\":%lu,\"rtcm_sequence_gaps\":%lu,\"uart_write_errors\":%lu,\"ack_queued\":%lu,\"ack_send_fail\":%lu,\"last_rtcm_age_ms\":%lu}",
+             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"base_mac\":\"%s\",\"base_mac_stored\":%s,\"pairing_active\":%s,\"pair_discovery_rx\":%lu,\"pair_response_tx\":%lu,\"pair_confirm_ok\":%lu,\"pair_auth_fail\":%lu,\"gnss_data_ok\":%s,\"packets_received\":%lu,\"packets_wrong_source\":%lu,\"packets_invalid\":%lu,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_queue_hwm\":%lu,\"rtcm_duplicates\":%lu,\"rtcm_timeouts\":%lu,\"rtcm_sequence_gaps\":%lu,\"uart_write_errors\":%lu,\"ack_queued\":%lu,\"ack_send_fail\":%lu,\"llh_status_sent\":%lu,\"llh_status_skipped\":%lu,\"llh_status_failures\":%lu,\"last_rtcm_age_ms\":%lu}",
              uptime_s, freeHeap, connected_via.c_str(),
              mqttOk ? "true" : "false",
              espnowIsReady() ? "true" : "false",
@@ -255,6 +255,9 @@ String formDeviceHealthString()
              static_cast<unsigned long>(espnowStats.uartWriteErrors),
              static_cast<unsigned long>(espnowStats.ackPacketsQueued),
              static_cast<unsigned long>(espnowStats.ackSendFailures),
+             static_cast<unsigned long>(espnowStats.llhStatusSent),
+             static_cast<unsigned long>(espnowStats.llhStatusSkipped),
+             static_cast<unsigned long>(espnowStats.llhStatusFailures),
              static_cast<unsigned long>(frameAgeMs));
     // 3. Relay mode appends downstream health without changing the normal-mode
     // payload contract.

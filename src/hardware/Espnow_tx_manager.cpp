@@ -96,6 +96,13 @@ bool waitForPreviousCallback() {
     return !pending;
 }
 
+bool hasPendingCallback() {
+    portENTER_CRITICAL(&txStateMux);
+    const bool pending = callbackPending;
+    portEXIT_CRITICAL(&txStateMux);
+    return pending;
+}
+
 } // namespace
 
 bool espnowTxSetup() {
@@ -131,9 +138,10 @@ bool espnowTxSetup() {
     return true;
 }
 
-EspNowTxResult espnowTxSend(const uint8_t destinationMac[6],
+EspNowTxResult sendInternal(const uint8_t destinationMac[6],
                             const uint8_t* data,
-                            std::size_t length) {
+                            std::size_t length,
+                            bool lowPriorityTry) {
     uint8_t pairingPacketType = 0;
     const bool pairingPacket = getPairingPacketType(data, length, pairingPacketType);
     if (!txReady || txMutex == nullptr || callbackSemaphore == nullptr) {
@@ -146,14 +154,21 @@ EspNowTxResult espnowTxSend(const uint8_t destinationMac[6],
         length > rtcm_espnow::ESPNOW_V1_MAX_PACKET_SIZE) {
         return EspNowTxResult::InvalidArgument;
     }
-    if (xSemaphoreTake(txMutex, pdMS_TO_TICKS(ESPNOW_TX_MUTEX_TIMEOUT_MS)) != pdTRUE) {
+    const TickType_t mutexWait = lowPriorityTry
+                                     ? 0
+                                     : pdMS_TO_TICKS(ESPNOW_TX_MUTEX_TIMEOUT_MS);
+    if (xSemaphoreTake(txMutex, mutexWait) != pdTRUE) {
         if (pairingPacket) {
             logPairingTx(pairingPacketType, destinationMac, "mutex=timeout");
         }
-        return EspNowTxResult::MutexTimeout;
+        return lowPriorityTry ? EspNowTxResult::Busy : EspNowTxResult::MutexTimeout;
     }
 
-    if (!waitForPreviousCallback()) {
+    if (lowPriorityTry && hasPendingCallback()) {
+        xSemaphoreGive(txMutex);
+        return EspNowTxResult::Busy;
+    }
+    if (!lowPriorityTry && !waitForPreviousCallback()) {
         if (pairingPacket) {
             logPairingTx(pairingPacketType, destinationMac,
                          "previous_callback=still_pending timeout");
@@ -212,11 +227,24 @@ EspNowTxResult espnowTxSend(const uint8_t destinationMac[6],
     return succeeded ? EspNowTxResult::Success : EspNowTxResult::DeliveryFailed;
 }
 
+EspNowTxResult espnowTxSend(const uint8_t destinationMac[6],
+                            const uint8_t* data,
+                            std::size_t length) {
+    return sendInternal(destinationMac, data, length, false);
+}
+
+EspNowTxResult espnowTxTrySend(const uint8_t destinationMac[6],
+                               const uint8_t* data,
+                               std::size_t length) {
+    return sendInternal(destinationMac, data, length, true);
+}
+
 const char* espnowTxResultToString(EspNowTxResult result) {
     switch (result) {
         case EspNowTxResult::Success: return "success";
         case EspNowTxResult::NotReady: return "not_ready";
         case EspNowTxResult::InvalidArgument: return "invalid_argument";
+        case EspNowTxResult::Busy: return "busy";
         case EspNowTxResult::MutexTimeout: return "mutex_timeout";
         case EspNowTxResult::QueueError: return "queue_error";
         case EspNowTxResult::CallbackTimeout: return "callback_timeout";

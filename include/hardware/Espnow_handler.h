@@ -26,6 +26,9 @@ struct EspNowRtcmStats {
     uint32_t uartWriteErrors;
     uint32_t ackPacketsQueued;
     uint32_t ackSendFailures;
+    uint32_t llhStatusSent;
+    uint32_t llhStatusSkipped;
+    uint32_t llhStatusFailures;
     uint32_t lastValidFrameMillis;
     uint32_t pairDiscoveryReceived;
     uint32_t pairResponsesSent;
@@ -43,6 +46,9 @@ void espnowLoop();
 QueueHandle_t espnowGetReceiveQueue();
 EspNowRtcmStats espnowGetStats();
 bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence);
+bool espnowTrySendRoverLlhStatus(double latitude,
+                                 double longitude,
+                                 double heightM);
 bool espnowGetBaseMac(uint8_t mac[6]);
 
 void espnowRecordInvalidHeader();

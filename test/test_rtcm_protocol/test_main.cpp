@@ -53,6 +53,25 @@ void test_frame_ack_validation() {
     TEST_ASSERT_FALSE(validateFrameAck(ack, sizeof(ack)));
 }
 
+void test_rover_llh_status_validation() {
+    RoverLlhStatusPacket status{};
+    status.common.magic = MAGIC;
+    status.common.version = VERSION;
+    status.common.packetType = PACKET_TYPE_ROVER_LLH_STATUS;
+    status.sequence = 7;
+    status.latitudeE7 = 210734567;
+    status.longitudeE7 = 1058123456;
+    status.heightMm = 12345;
+
+    TEST_ASSERT_EQUAL_UINT32(20, sizeof(RoverLlhStatusPacket));
+    TEST_ASSERT_TRUE(validateRoverLlhStatus(status, sizeof(status)));
+    status.latitudeE7 = 900000001;
+    TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
+    status.latitudeE7 = 210734567;
+    status.common.packetType = PACKET_TYPE_FRAME_ACK;
+    TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
+}
+
 void test_pairing_packet_validation() {
     const std::array<uint8_t, 16> key{{0x10, 0x21, 0x32, 0x43,
                                       0x54, 0x65, 0x76, 0x87,
@@ -124,6 +143,7 @@ void runTests() {
     RUN_TEST(test_header_and_fragment_boundaries);
     RUN_TEST(test_packet_header_validation);
     RUN_TEST(test_frame_ack_validation);
+    RUN_TEST(test_rover_llh_status_validation);
     RUN_TEST(test_pairing_packet_validation);
     RUN_TEST(test_rtcm_crc_validation);
     UNITY_END();
