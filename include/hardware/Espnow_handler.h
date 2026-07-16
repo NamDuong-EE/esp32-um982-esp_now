@@ -31,12 +31,11 @@ struct EspNowRtcmStats {
     uint32_t pairResponsesSent;
     uint32_t pairConfirmsAccepted;
     uint32_t pairAuthFailures;
-    bool hasRssi;
-    int8_t lastRssiDbm;
     bool hasStoredBaseMac;
     bool pairingActive;
 };
 
+bool espnowPrepare();
 bool espnowSetup();
 bool espnowRefreshPeerChannel();
 bool espnowIsReady();

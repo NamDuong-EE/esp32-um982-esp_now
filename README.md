@@ -52,13 +52,15 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 Luồng khởi tạo:
 
 ```text
-WiFi.mode(WIFI_STA)
+Đặt Wi-Fi mode cuối cùng: WIFI_STA hoặc WIFI_AP_STA
         ↓
-Bật WIFI_PROTOCOL_11B/G/N/LR
+Bật WIFI_PROTOCOL_11B/G/N/LR và channel cố định
         ↓
-Đặt ESP-NOW channel cố định từ ESPNOW_WIFI_CHANNEL
+Khởi tạo ESP-NOW core, shared TX manager và đặt LR PHY rate
         ↓
-Khởi tạo ESP-NOW peer unicast với Base
+Nạp/thêm peer Base, sau đó peer Child/broadcast nếu Relay mode
+        ↓
+Khởi động debug SoftAP nếu DEBUG_WEB_ENABLED=1
         ↓
 Nhận fragment RTCM vào FreeRTOS Queue
         ↓
@@ -99,6 +101,7 @@ Quy tắc hoạt động:
 6. Mọi packet downstream gồm pairing control và fragment RTCM đều phải nhận ESP-NOW send callback thành công; `esp_now_send()` chỉ trả về queued không còn được xem là đã phát thành công.
 7. Phiên bản hiện tại hỗ trợ đúng một Rover con, queue downstream dài 3 frame và tối đa 3 lần gửi toàn frame (lần đầu + 2 retry).
 8. Base, Relay và Rover con phải dùng cùng `ESPNOW_WIFI_CHANNEL` và cùng cấu hình LR PHY.
+9. Khi mở pairing downstream, Relay dừng gửi RTCM, xóa các frame downstream cũ và chỉ dành TX cho pairing. Frame RTCM mới nhận trong cửa sổ này vẫn được ghi vào UART local nhưng không được đưa vào queue rover con.
 
 Pairing dùng chung nút vật lý nhưng không mở hai state machine đồng thời:
 
@@ -112,9 +115,13 @@ Các tham số chính trong `include/Prog_Config.h`:
 ROVER_RELAY_MODE
 RELAY_QUEUE_LENGTH
 RELAY_ACK_TIMEOUT_MS
-RELAY_SEND_CALLBACK_TIMEOUT_MS
+ESPNOW_TX_MUTEX_TIMEOUT_MS
+ESPNOW_TX_CALLBACK_TIMEOUT_MS
+ESPNOW_FORCE_LR_RATE
+ESPNOW_USE_LR_250KBPS
 RELAY_FRAME_RETRY_COUNT
 RELAY_FRAGMENT_SEND_RETRY_COUNT
+RELAY_FAILED_FRAME_BACKOFF_MS
 RELAY_DISCOVERY_INTERVAL_MS
 ```
 
@@ -323,17 +330,19 @@ API: http://192.168.4.1/api/relay/status
 
 SoftAP dùng cùng `ESPNOW_WIFI_CHANNEL` với ESP-NOW để tránh đổi channel radio. Cả hai trang poll JSON mỗi 1 giây và lấy dữ liệu GNSS local từ câu GGA:
 
+SoftAP luôn được khởi động sau khi Wi-Fi mode/channel, ESP-NOW LR rate và các peer đã được cấu hình. Đây là cùng thứ tự dùng ở luồng pairing ổn định ban đầu; SoftAP không chen giữa bước khởi tạo core và bước đăng ký peer.
+
 - `lat`, `lon`
 - `rtk_status` là số GGA fix quality, ví dụ `4` hoặc `5`
 - `satellites`
 - `last_gga_age_ms`
 
-Normal web hiển thị health Rover hiện tại: ESP-NOW ready, Base pairing/RSSI, RTCM frame, CRC, queue, sequence gap, ACK và free heap.
+Normal web hiển thị health Rover hiện tại: ESP-NOW ready, Base pairing, RTCM frame, CRC, queue, sequence gap, ACK và free heap.
 
 Relay web tách health của hai liên kết thành:
 
-- Upstream: Base MAC/RSSI/pairing, frame nhận, CRC, queue, ACK gửi Base và tuổi RTCM cuối.
-- Downstream: Child MAC/RSSI/pairing, frame queued/sent/ACKed, fragment, retry, ACK timeout, send failure và frame bị bỏ khi chưa có child.
+- Upstream: Base MAC/pairing, frame nhận, CRC, queue, ACK gửi Base và tuổi RTCM cuối.
+- Downstream: Child MAC/pairing, frame queued/sent/ACKed, fragment, retry, ACK timeout, send failure và frame bị bỏ khi chưa có child.
 
 ## Kết nối ESP32U với UM980/982
 
@@ -454,6 +463,8 @@ Task reassembly:
 | `src/protocol/RtcmEspNowProtocol.cpp` | Validate header, fragment boundary và CRC24Q |
 | `include/hardware/Espnow_handler.h` | API khởi tạo ESP-NOW receive phía Rover |
 | `src/hardware/Espnow_handler.cpp` | Cấu hình STA/LR, peer Base và đưa packet vào queue |
+| `include/hardware/Espnow_tx_manager.h` | API gửi ESP-NOW tuần tự và kết quả TX chi tiết |
+| `src/hardware/Espnow_tx_manager.cpp` | Một mutex/send callback dùng chung cho ACK, pairing và Relay fragment |
 | `include/hardware/Relay_handler.h` | API và health model của downstream Relay |
 | `src/hardware/Relay_handler.cpp` | Pair/lưu child, relay queue, chia fragment, gửi/retry và nhận ACK downstream |
 | `include/functions/Rtcm_EspNow_Handler.h` | API reassembly/validate RTCM |
@@ -524,7 +535,7 @@ python -m platformio device monitor --port COM5 --baud 115200
 [WIFI] Khong ket noi router/AP; chi dung STA radio cho ESP-NOW
 [WIFI] Local STA MAC: XX:XX:XX:XX:XX:XX
 [WIFI] ESP-NOW fixed channel: 6
-[ESP-NOW] Ready, STA channel=6, LR=250 Kbps
+[ESP-NOW] Ready, STA channel=6, TX rate=default, peer=<none>
 [MQTT] Da tat theo cau hinh ROVER_MQTT_ENABLED=false
 [SETUP] Khoi dong hoan tat
 ```
@@ -533,6 +544,9 @@ Nếu `DEBUG_WEB_ENABLED=1`, log sẽ có thêm:
 
 ```text
 [WIFI] Debug web bat; Wi-Fi mode AP+STA
+[ESP-NOW] Reuse preconfigured Wi-Fi radio, channel=6
+[ESP-NOW][TX] Shared TX manager ready
+[ESP-NOW] Core ready, TX rate=default
 [DEBUG_WEB] mode=normal SSID=ESP32-Rover-Debug IP=192.168.4.1 channel=6 MAC=XX:XX:XX:XX:XX:XX
 ```
 
@@ -596,9 +610,9 @@ Kiểm tra thêm với Relay mode:
 | Upload timeout | Chọn đúng COM và dùng nút BOOT/EN |
 | ESP-NOW không Ready | Kiểm tra PMK/LMK, `ESPNOW_WIFI_CHANNEL` và log pairing |
 | Có ESP-NOW Ready nhưng không có RTCM | Pair Base/Rover trước, kiểm tra cùng channel và Base gửi tới MAC Rover đã lưu |
-| Relay nhận RTCM nhưng Rover con không nhận | Kiểm tra `child_provisioned`, Child RSSI, relay queue, ACK timeout và bảo đảm Rover con pair với Relay chứ không pair Base |
+| Relay nhận RTCM nhưng Rover con không nhận | Kiểm tra `child_provisioned`, relay queue, ACK timeout và bảo đảm Rover con pair với Relay chứ không pair Base |
 | Nhấn nút trên Relay nhưng mở upstream pairing | Relay chưa có `base_mac`; phải pair Relay với Base trước rồi mới pair child |
-| Relay queue overflow | Kiểm tra Child RSSI/ACK, giảm retry hoặc tốc độ RTCM, và xác nhận ba thiết bị cùng channel/LR rate |
+| Relay queue overflow | Kiểm tra ACK từ Child, giảm retry hoặc tốc độ RTCM, và xác nhận ba thiết bị cùng channel/LR rate |
 | CRC error tăng | Kiểm tra protocol phía Base, `frameLength`, fragment index/count và CRC24Q |
 | UM980/982 không nhận correction | Kiểm tra TX/RX nối chéo, chung GND, baud và mức logic UART |
 | Serial Monitor ký tự rác | Đặt monitor baud 115200 |
@@ -628,25 +642,24 @@ Kiểm tra thêm với Relay mode:
 
 ## Kết quả kiểm tra phần mềm gần nhất
 
-- Lần kiểm tra phần mềm gần nhất: 2026-07-14.
+- Lần kiểm tra phần mềm gần nhất: 2026-07-15.
 - PlatformIO Core: **6.1.19** tại `C:\Users\admin\.platformio\penv\Scripts\pio.exe`.
-- PlatformIO `esp32u_rover_espnow`: **SUCCESS**, RAM 46,896/327,680 byte (14.3%), Flash 819,745/1,310,720 byte (62.5%) với Normal debug web.
-- PlatformIO `esp32u_rover_relay`: **SUCCESS**, RAM 47,080/327,680 byte (14.4%), Flash 828,721/1,310,720 byte (63.2%) với Relay debug web.
+- PlatformIO `esp32u_rover_espnow`: **SUCCESS**, RAM 46,472/327,680 byte (14.2%), Flash 782,037/1,310,720 byte (59.7%) ở Normal mode.
+- PlatformIO `esp32u_rover_relay`: **SUCCESS**, RAM 46,664/327,680 byte (14.2%), Flash 790,609/1,310,720 byte (60.3%) ở Relay mode.
 - Native unit test: **5/5 PASSED**.
-- Artifact ngày 2026-07-14: Normal `firmware.bin` 826,320 byte; Relay `firmware.bin` 835,296 byte.
+- Artifact ngày 2026-07-15: Normal `firmware.bin` 788,176 byte; Relay `firmware.bin` 796,144 byte.
 - MAC Base hard-code đã được loại bỏ; cần pair Base/Rover để có MAC trong NVS trước khi chạy RTCM runtime.
 - Tối ưu ngày 2026-07-06 đã đồng bộ timeout 1500 ms với deadline Base, thêm ACK ứng dụng/chống ghi trùng, UART TX buffer 2048 byte và telemetry đầy đủ. Vẫn cần test state machine và kiểm thử RTK end-to-end trên phần cứng.
 - Rà soát ngày 2026-07-07: `pio` chưa có trong PATH của shell hiện tại, nhưng chạy trực tiếp bằng đường dẫn trong `.platformio\penv\Scripts` thành công.
 - Debug web đã được build thử với `DEBUG_WEB_ENABLED=1`: **SUCCESS**, RAM 46,672 byte (14.2%), Flash 809,057 byte (61.7%).
 - Đã set cứng công suất phát WiFi/ESP-NOW của Rover bằng `WiFi.setTxPower(WIFI_POWER_19_5dBm)` ngay sau khi bật STA/AP+STA radio. Firmware đọc lại `esp_wifi_get_max_tx_power()` và in log `[WIFI] TX power fixed raw=... dBm=...` để xác nhận runtime.
 - Đã build xác nhận sau khi set TX power 19.5 dBm: `esp32u_rover_espnow` SUCCESS, RAM 46,696/327,680 byte (14.3%), Flash 810,205/1,310,720 byte (61.8%).
-- Đã thêm RSSI ESP-NOW Base vào web debug Rover: dùng promiscuous callback lọc source MAC của Base, cập nhật `espnow_rssi_dbm` trong `/api/status` và hiển thị card `Base RSSI` trên trang `192.168.4.1`.
-- Đã build xác nhận sau khi thêm RSSI web debug và bỏ `espnow_rssi_age_ms`/`espnow_rssi_samples`: `esp32u_rover_espnow` SUCCESS, RAM 46,704/327,680 byte (14.3%), Flash 811,597/1,310,720 byte (61.9%).
+- Đã xóa hiển thị và thu thập RSSI ESP-NOW ngày 2026-07-15: Normal/Relay web và JSON API không còn trường RSSI; promiscuous monitor cùng các trường stats liên quan cũng được loại bỏ.
 - Đã triển khai Rover-side pairing động ngày 2026-07-08: packet pairing riêng, auth tag nhẹ bằng `ESPNOW_PAIRING_KEY`, nút pairing, NVS lưu MAC Base và runtime ACK/RTCM dùng MAC active. Native unit test tăng lên **5/5 PASSED**.
 - Đã build xác nhận sau pairing Rover-side: `esp32u_rover_espnow` SUCCESS, RAM 46,896/327,680 byte (14.3%), Flash 820,241/1,310,720 byte (62.6%).
 - Đã đồng bộ với Base-side pairing đã triển khai: Base broadcast `PAIR_DISCOVERY`, Rover trả lời `PAIR_RESPONSE`, nhận `PAIR_CONFIRM` rồi lưu MAC Base. Build Rover `esp32u_rover_espnow` vẫn **SUCCESS** RAM 46,896/327,680 byte (14.3%), Flash 820,241/1,310,720 byte (62.6%); native protocol test **5/5 PASSED**.
 - Đã xóa MAC Base hard-code khỏi Rover ngày 2026-07-08: không còn `ESPNOW_BASE_MAC`, không còn fallback MAC tĩnh; Rover chờ pairing nếu NVS chưa có MAC Base. Web debug cũng bỏ `base_mac_stored` khỏi bảng hiển thị vì `base_provisioned` hiện chỉ đúng khi đã có MAC từ NVS. Build Rover `esp32u_rover_espnow` **SUCCESS** RAM 46,896/327,680 byte (14.3%), Flash 820,073/1,310,720 byte (62.6%); native protocol test **5/5 PASSED**.
-- Web debug đang bật lại `ESPNOW_RSSI_MONITOR_ENABLED=true` để hiển thị RSSI Base trên trang debug. Nếu một số client báo lỗi khi vào SoftAP, có thể thử đổi password SoftAP hoặc tạm đặt flag này về `false` để tách lỗi kết nối khỏi RSSI sniffing.
 - Triển khai Relay mode ngày 2026-07-14: Base protocol v1 không đổi; Relay lưu riêng `base_mac`/`child_mac`, chỉ forward frame sau reassembly/CRC/UART local, giữ `streamId + frameSequence`, có queue downstream, retry và ACK riêng. Normal/Relay debug web đã tách theo build environment. Hai firmware build SUCCESS và native protocol test **5/5 PASSED**; topology ba thiết bị chưa được xác nhận trên phần cứng.
 - Sau log phần cứng cho thấy Rover con có `pair_discovery_rx=0`, Relay sender được đổi sang send callback đồng bộ như Base: broadcast discovery, confirm và mọi fragment đều chờ kết quả radio, dùng mutex và retry. Log pairing mới phân biệt `PAIR_DISCOVERY radio TX confirmed` với send callback failure.
-- RSSI promiscuous monitor không còn được bật khi Rover chưa có `base_mac`; monitor được hoãn đến sau `PAIR_CONFIRM` để đường nhận pairing ESP-NOW chạy gọn ở trạng thái chưa provision.
+- Khắc phục xung đột TX ngày 2026-07-15: mọi `esp_now_send()` của ACK upstream, pairing và fragment downstream đi qua một TX manager/mutex/send callback duy nhất; ACK Base được gửi trước khi queue frame cho Child. Relay có backoff 1000 ms sau frame lỗi và tách counter `send_immediate_errors`, `send_callback_timeouts`, `send_delivery_failures`, `backoff_events`.
+- Ổn định lại boot/pairing ngày 2026-07-15: cấu hình radio → `esp_now_init()`/TX manager/LR rate → nạp Base peer → nạp Child/broadcast peer → khởi động SoftAP tùy chọn → tạo task. SoftAP trở lại bước cuối như luồng pairing ổn định ban đầu; pairing downstream tạm dừng toàn bộ TX RTCM và xóa queue cũ để discovery không tranh radio với retry. Mặc định `ROVER_RELAY_MODE_ENABLED=0`; chỉ environment `esp32u_rover_relay` ép Relay mode.

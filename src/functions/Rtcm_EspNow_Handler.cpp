@@ -178,6 +178,9 @@ bool processNextRtcmEspNowPacket(TickType_t waitTicks) {
 
     recordSequenceGap(streamId, sequence);
     espnowRecordFrameWritten();
+    // ACK upstream first. All ESP-NOW transmissions are serialized by the
+    // shared TX manager, so downstream forwarding cannot overlap this ACK.
+    espnowSendFrameAck(streamId, sequence);
     if constexpr (ROVER_RELAY_MODE) {
         // Downstream delivery is intentionally independent from the upstream
         // ACK. A missing/unpaired child must not make the Base rewrite RTCM to
@@ -185,6 +188,5 @@ bool processNextRtcmEspNowPacket(TickType_t waitTicks) {
         relayQueueFrame(state.frame, state.frameLength, streamId, sequence);
     }
     clearActiveFrame();
-    espnowSendFrameAck(streamId, sequence);
     return true;
 }

@@ -58,6 +58,7 @@ void setup() {
     Serial.println("\n=========================================");
     Serial.println("       ESP32U GNSS ROVER KHOI DONG       ");
     Serial.println("=========================================");
+    Serial.printf("[MODE] %s\n", ROVER_RELAY_MODE ? "relay" : "normal");
 
     if (Serial1.setTxBufferSize(GNSS_TX_BUFFER_SIZE) != GNSS_TX_BUFFER_SIZE) {
         Serial.println("[GNSS][ERROR] Khong dat duoc UART TX buffer");
@@ -78,10 +79,15 @@ void setup() {
         }
     }
 
-    if constexpr (WIFI_CONNECT_TO_ROUTER_ENABLED) {
-        setupNetworkWithRetry();
+    // Keep the ESP-NOW startup path deterministic: configure the radio/core,
+    // register all runtime peers, then start the optional SoftAP last. The LR
+    // rate must be configured before SoftAP on this ESP32 Arduino stack.
+    setupNetworkWithRetry();
+    const bool espnowCoreReady = espnowPrepare();
+    if (!espnowCoreReady) {
+        Serial.println("[SETUP][WARN] ESP-NOW core/LR chua san sang");
     }
-    if (!espnowSetup()) {
+    if (espnowCoreReady && !espnowSetup()) {
         Serial.println("[SETUP][WARN] ESP-NOW chua hoat dong; hay pair voi Base");
     }
     if constexpr (ROVER_RELAY_MODE) {
@@ -90,7 +96,7 @@ void setup() {
         }
     }
     if constexpr (DEBUG_WEB_ENABLED) {
-        if (!debugWebSetup()) {
+        if (espnowIsReady() && !debugWebSetup()) {
             Serial.println("[SETUP][WARN] Debug web chua hoat dong");
         }
     }
@@ -231,7 +237,14 @@ void loop() {
     if (!espnowIsReady() && ESPNOW_PAIRING_ENABLED &&
         millis() - lastEspNowRetry >= 5000) {
         lastEspNowRetry = millis();
-        espnowSetup();
+        if (espnowPrepare() && espnowSetup()) {
+            if constexpr (ROVER_RELAY_MODE) {
+                relaySetup();
+            }
+            if constexpr (DEBUG_WEB_ENABLED) {
+                debugWebSetup();
+            }
+        }
     }
     if constexpr (ROVER_RELAY_MODE) {
         if (espnowIsReady() && !relayIsReady()) {

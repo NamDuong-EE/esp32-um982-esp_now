@@ -9,6 +9,8 @@
 
 namespace {
 
+bool radioReady = false;
+
 const char* wifiStatusToText(wl_status_t status) {
   switch (status) {
     case WL_IDLE_STATUS:
@@ -124,6 +126,10 @@ bool configureWiFiForEspNowLongRange() {
   return true;
 }
 
+bool wifiRadioIsReady() {
+  return radioReady;
+}
+
 uint8_t getWiFiChannel() {
   uint8_t primaryChannel = 0;
   wifi_second_chan_t secondChannel = WIFI_SECOND_CHAN_NONE;
@@ -160,6 +166,7 @@ bool setupEspNowStaRadio() {
   }
   Serial.println("[WIFI] Local STA MAC: " + WiFi.macAddress());
   Serial.printf("[WIFI] ESP-NOW fixed channel: %u\n", getWiFiChannel());
+  radioReady = true;
   return true;
 }
 
@@ -199,7 +206,11 @@ bool setupWiFi() {
   Serial.println("\n[WIFI] Ket noi THANH CONG! IP: " + WiFi.localIP().toString());
   Serial.println("[WIFI] Rover STA MAC: " + WiFi.macAddress());
   Serial.printf("[WIFI] Channel: %u\n", getWiFiChannel());
-  return configureWiFiForEspNowLongRange();
+  if (!configureWiFiForEspNowLongRange()) {
+    return false;
+  }
+  radioReady = true;
+  return true;
 }
 
 #endif // WIFI_CODE

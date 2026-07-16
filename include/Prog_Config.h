@@ -58,21 +58,25 @@ inline constexpr char TOPIC_PUB_HEALTH[] = "tdm2402/um980/health";
 // Disabled by default for field operation. Set to 1 to compile and host a
 // simple SoftAP debug page at http://192.168.4.1 on the ESP-NOW channel.
 #ifndef DEBUG_WEB_ENABLED
-#define DEBUG_WEB_ENABLED 1
+#define DEBUG_WEB_ENABLED 0
 #endif
 inline constexpr char DEBUG_WEB_AP_SSID[] = "ESP32-Rover-Debug";
 inline constexpr char DEBUG_WEB_RELAY_AP_SSID[] = "ESP32-Rover-Relay";
 inline constexpr char DEBUG_WEB_AP_PASSWORD[] = "123456789";
 inline constexpr uint8_t DEBUG_WEB_AP_MAX_CLIENTS = 2;
 
-// ================= ESP-NOW =================
+// ================= ESP-NOW =================25
 // Base MAC is learned via pairing and stored in NVS/Preferences.
 inline constexpr std::size_t ESPNOW_QUEUE_LENGTH = 16;
 inline constexpr uint32_t RTCM_REASSEMBLY_TIMEOUT_MS = 1500;
-inline constexpr bool ESPNOW_USE_LR_250KBPS = true;
-// Enables Base RSSI display on the debug web page. Set false only if a client
-// has trouble joining the debug SoftAP.
-inline constexpr bool ESPNOW_RSSI_MONITOR_ENABLED = true;
+// ESP-NOW TX rate selection:
+// - ESPNOW_FORCE_LR_RATE=false: keep the ESP-IDF default TX rate.
+// - ESPNOW_FORCE_LR_RATE=true: force 250 or 500 Kbps LR below.
+// WIFI_PROTOCOL_LR remains enabled in both cases so LR frames can be received.
+inline constexpr bool ESPNOW_FORCE_LR_RATE = true;
+inline constexpr bool ESPNOW_USE_LR_250KBPS = true; // true=250 Kbps, false=500 Kbps
+inline constexpr uint32_t ESPNOW_TX_MUTEX_TIMEOUT_MS = 500;
+inline constexpr uint32_t ESPNOW_TX_CALLBACK_TIMEOUT_MS = 300;
 
 // ================= ESP-NOW PAIRING =================
 inline constexpr bool ESPNOW_PAIRING_ENABLED = true;
@@ -95,10 +99,10 @@ inline constexpr char ESPNOW_NVS_BASE_MAC_KEY[] = "base_mac";
 inline constexpr char ESPNOW_NVS_CHILD_MAC_KEY[] = "child_mac";
 inline constexpr std::size_t RELAY_QUEUE_LENGTH = 3;
 inline constexpr uint32_t RELAY_ACK_TIMEOUT_MS = 300;
-inline constexpr uint32_t RELAY_SEND_CALLBACK_TIMEOUT_MS = 100;
 inline constexpr uint8_t RELAY_FRAME_RETRY_COUNT = 2;
 inline constexpr uint8_t RELAY_FRAGMENT_SEND_RETRY_COUNT = 2;
 inline constexpr uint32_t RELAY_FRAGMENT_GAP_MS = 5;
+inline constexpr uint32_t RELAY_FAILED_FRAME_BACKOFF_MS = 1000;
 inline constexpr uint32_t RELAY_DISCOVERY_INTERVAL_MS = 500;
 
 // Enable only after replacing both keys on Base and Rover with the same provisioned values.

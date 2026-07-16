@@ -10,6 +10,7 @@
 bool setupWiFi();
 bool setupEspNowStaRadio();
 bool configureWiFiForEspNowLongRange();
+bool wifiRadioIsReady();
 uint8_t getWiFiChannel();
 
 #endif

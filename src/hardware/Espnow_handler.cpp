@@ -15,20 +15,19 @@
 #endif
 
 #include "Prog_Config.h"
+#include "hardware/Espnow_tx_manager.h"
 #include "hardware/Relay_handler.h"
 #include "hardware/Wifi_handler.h"
 
 namespace {
 
 QueueHandle_t receiveQueue = nullptr;
+QueueHandle_t pairDiagnosticQueue = nullptr;
+bool coreReady = false;
 bool ready = false;
-bool rssiMonitorReady = false;
 EspNowRtcmStats stats{};
 portMUX_TYPE statsMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE pairingMux = portMUX_INITIALIZER_UNLOCKED;
-
-constexpr std::size_t IEEE80211_ADDR2_OFFSET = 10;
-constexpr std::size_t IEEE80211_MIN_ADDR2_LENGTH = IEEE80211_ADDR2_OFFSET + 6;
 
 uint8_t activeBaseMac[6] = {};
 bool hasActiveBaseMac = false;
@@ -47,6 +46,19 @@ uint8_t pendingPairDiscoveryMac[6] = {};
 uint8_t pendingPairConfirmMac[6] = {};
 rtcm_espnow::PairDiscoveryPacket pendingPairDiscoveryPacket{};
 rtcm_espnow::PairConfirmPacket pendingPairConfirmPacket{};
+
+struct PairRxDiagnosticEvent {
+    uint8_t sourceMac[6];
+    int16_t length;
+    uint16_t magic;
+    uint8_t version;
+    uint8_t packetType;
+    bool headerAvailable;
+    bool upstreamPairingActive;
+    bool childPairingActive;
+};
+
+constexpr UBaseType_t PAIR_DIAGNOSTIC_QUEUE_LENGTH = 16;
 
 void updateCounter(uint32_t EspNowRtcmStats::*member, uint32_t increment = 1) {
     portENTER_CRITICAL(&statsMux);
@@ -131,32 +143,6 @@ bool isExpectedRuntimeBase(const uint8_t* mac) {
     return hasActiveBaseMac && mac != nullptr && std::memcmp(mac, activeBaseMac, 6) == 0;
 }
 
-void recordRssi(int8_t rssi) {
-    portENTER_CRITICAL(&statsMux);
-    stats.hasRssi = true;
-    stats.lastRssiDbm = rssi;
-    portEXIT_CRITICAL(&statsMux);
-}
-
-void onPromiscuousPacket(void* buffer, wifi_promiscuous_pkt_type_t type) {
-    if (buffer == nullptr || (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA)) {
-        return;
-    }
-
-    const auto* packet = static_cast<const wifi_promiscuous_pkt_t*>(buffer);
-    if (packet->rx_ctrl.rx_state != 0 ||
-        packet->rx_ctrl.sig_len < IEEE80211_MIN_ADDR2_LENGTH) {
-        return;
-    }
-
-    const uint8_t* sourceMac = packet->payload + IEEE80211_ADDR2_OFFSET;
-    if (isExpectedRuntimeBase(sourceMac)) {
-        recordRssi(static_cast<int8_t>(packet->rx_ctrl.rssi));
-    } else if constexpr (ROVER_RELAY_MODE) {
-        relayRecordChildRssi(sourceMac, static_cast<int8_t>(packet->rx_ctrl.rssi));
-    }
-}
-
 uint32_t localDeviceId() {
     uint8_t mac[6] = {};
     if (esp_wifi_get_mac(WIFI_IF_STA, mac) != ESP_OK) {
@@ -201,7 +187,14 @@ bool configurePeer(uint8_t channel) {
     if (!addPeerForMac(activeBaseMac, channel, ESPNOW_ENCRYPTION_ENABLED)) {
         return false;
     }
+    return true;
+}
 
+bool configureEspNowRate() {
+    if constexpr (!ESPNOW_FORCE_LR_RATE) {
+        Serial.println("[ESP-NOW] TX rate=default; LR protocol capability remains enabled");
+        return true;
+    }
     const wifi_phy_rate_t rate = ESPNOW_USE_LR_250KBPS
                                      ? WIFI_PHY_RATE_LORA_250K
                                      : WIFI_PHY_RATE_LORA_500K;
@@ -213,11 +206,115 @@ bool configurePeer(uint8_t channel) {
     return true;
 }
 
+const char* espNowTxRateToText() {
+    if constexpr (!ESPNOW_FORCE_LR_RATE) {
+        return "default";
+    }
+    return ESPNOW_USE_LR_250KBPS ? "LR-250K" : "LR-500K";
+}
+
 bool isPairingActive() {
     portENTER_CRITICAL(&pairingMux);
     const bool active = pairingActive;
     portEXIT_CRITICAL(&pairingMux);
     return active;
+}
+
+const char* pairingPacketTypeToText(uint8_t packetType) {
+    switch (packetType) {
+        case rtcm_espnow::PACKET_TYPE_PAIR_DISCOVERY: return "PAIR_DISCOVERY";
+        case rtcm_espnow::PACKET_TYPE_PAIR_RESPONSE: return "PAIR_RESPONSE";
+        case rtcm_espnow::PACKET_TYPE_PAIR_CONFIRM: return "PAIR_CONFIRM";
+        default: return "UNKNOWN";
+    }
+}
+
+int expectedPairingPacketLength(uint8_t packetType) {
+    switch (packetType) {
+        case rtcm_espnow::PACKET_TYPE_PAIR_DISCOVERY:
+            return static_cast<int>(sizeof(rtcm_espnow::PairDiscoveryPacket));
+        case rtcm_espnow::PACKET_TYPE_PAIR_RESPONSE:
+            return static_cast<int>(sizeof(rtcm_espnow::PairResponsePacket));
+        case rtcm_espnow::PACKET_TYPE_PAIR_CONFIRM:
+            return static_cast<int>(sizeof(rtcm_espnow::PairConfirmPacket));
+        default:
+            return -1;
+    }
+}
+
+void queuePairRxDiagnostic(const uint8_t* sourceMac,
+                           const uint8_t* data,
+                           int length) {
+    if (pairDiagnosticQueue == nullptr) {
+        return;
+    }
+
+    PairRxDiagnosticEvent event{};
+    event.length = static_cast<int16_t>(length);
+    if (sourceMac != nullptr) {
+        std::memcpy(event.sourceMac, sourceMac, sizeof(event.sourceMac));
+    }
+    event.upstreamPairingActive = isPairingActive();
+    if constexpr (ROVER_RELAY_MODE) {
+        event.childPairingActive = relayIsChildPairingActive();
+    }
+
+    if (data != nullptr &&
+        length >= static_cast<int>(sizeof(rtcm_espnow::EspNowCommonHeader))) {
+        rtcm_espnow::EspNowCommonHeader common{};
+        std::memcpy(&common, data, sizeof(common));
+        event.headerAvailable = true;
+        event.magic = common.magic;
+        event.version = common.version;
+        event.packetType = common.packetType;
+        if (expectedPairingPacketLength(common.packetType) < 0) {
+            return;
+        }
+    } else if (!event.upstreamPairingActive && !event.childPairingActive) {
+        return;
+    }
+
+    xQueueSend(pairDiagnosticQueue, &event, 0);
+}
+
+void drainPairRxDiagnostics() {
+    if (pairDiagnosticQueue == nullptr) {
+        return;
+    }
+
+    PairRxDiagnosticEvent event{};
+    while (xQueueReceive(pairDiagnosticQueue, &event, 0) == pdTRUE) {
+        const char* prefix =
+            ROVER_RELAY_MODE && event.headerAvailable &&
+                    event.packetType == rtcm_espnow::PACKET_TYPE_PAIR_RESPONSE
+                ? "[RELAY][PAIR][RX_CB]"
+                : "[PAIR][RX_CB]";
+        if (!event.headerAvailable) {
+            Serial.printf("%s src=%s len=%d header=missing upstream_pairing=%u child_pairing=%u\n",
+                          prefix,
+                          macToString(event.sourceMac).c_str(),
+                          static_cast<int>(event.length),
+                          event.upstreamPairingActive ? 1U : 0U,
+                          event.childPairingActive ? 1U : 0U);
+            continue;
+        }
+
+        const int expectedLength = expectedPairingPacketLength(event.packetType);
+        Serial.printf("%s src=%s len=%d expected_len=%d length=%s magic=0x%04X(%s) version=%u(%s) type=%s(%u) upstream_pairing=%u child_pairing=%u\n",
+                      prefix,
+                      macToString(event.sourceMac).c_str(),
+                      static_cast<int>(event.length),
+                      expectedLength,
+                      event.length == expectedLength ? "ok" : "bad",
+                      static_cast<unsigned>(event.magic),
+                      event.magic == rtcm_espnow::MAGIC ? "ok" : "bad",
+                      static_cast<unsigned>(event.version),
+                      event.version == rtcm_espnow::VERSION ? "ok" : "bad",
+                      pairingPacketTypeToText(event.packetType),
+                      static_cast<unsigned>(event.packetType),
+                      event.upstreamPairingActive ? 1U : 0U,
+                      event.childPairingActive ? 1U : 0U);
+    }
 }
 
 void updatePairingActiveStat(bool active) {
@@ -308,6 +405,7 @@ bool handlePairConfirm(const uint8_t* sourceMac, const uint8_t* data, int length
 }
 
 void handleReceivedPacket(const uint8_t* sourceMac, const uint8_t* data, int length) {
+    queuePairRxDiagnostic(sourceMac, data, length);
     if (data == nullptr ||
         length < static_cast<int>(sizeof(rtcm_espnow::EspNowCommonHeader)) ||
         length > static_cast<int>(rtcm_espnow::ESPNOW_V1_MAX_PACKET_SIZE)) {
@@ -375,35 +473,6 @@ void onDataReceived(const uint8_t* sourceMac, const uint8_t* data, int length) {
 }
 #endif
 
-void setupRssiMonitor() {
-    if (rssiMonitorReady) {
-        return;
-    }
-    wifi_promiscuous_filter_t filter{};
-    filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA;
-
-    esp_err_t result = esp_wifi_set_promiscuous_filter(&filter);
-    if (result != ESP_OK) {
-        Serial.printf("[ESP-NOW][WARN] Khong dat duoc RSSI promiscuous filter: %d\n", result);
-        return;
-    }
-
-    result = esp_wifi_set_promiscuous_rx_cb(onPromiscuousPacket);
-    if (result != ESP_OK) {
-        Serial.printf("[ESP-NOW][WARN] Khong dang ky duoc RSSI callback: %d\n", result);
-        return;
-    }
-
-    result = esp_wifi_set_promiscuous(true);
-    if (result != ESP_OK) {
-        Serial.printf("[ESP-NOW][WARN] Khong bat duoc RSSI monitor: %d\n", result);
-        return;
-    }
-
-    rssiMonitorReady = true;
-    Serial.println("[ESP-NOW] RSSI monitor enabled for Base MAC");
-}
-
 void setupPairingButton() {
     if (!ESPNOW_PAIRING_ENABLED || pairingButtonReady) {
         return;
@@ -443,9 +512,6 @@ void commitPendingPairSave() {
         Serial.println("[PAIR][ERROR] Cau hinh peer Base sau pairing that bai");
         return;
     }
-    if constexpr (DEBUG_WEB_ENABLED && ESPNOW_RSSI_MONITOR_ENABLED) {
-        setupRssiMonitor();
-    }
     Serial.println("[PAIR] Saved Base MAC to NVS and switched runtime peer to " + macToString(activeBaseMac));
 }
 
@@ -466,14 +532,30 @@ void processPendingPairDiscovery() {
         return;
     }
 
+    Serial.printf("[PAIR][DIAG] Process PAIR_DISCOVERY src=%s len=%u\n",
+                  macToString(sourceMac).c_str(),
+                  static_cast<unsigned>(sizeof(discovery)));
+
+    const uint32_t expectedAuth = rtcm_espnow::pairingAuthTag(
+        discovery, ESPNOW_PAIRING_KEY, sizeof(ESPNOW_PAIRING_KEY));
     if (!rtcm_espnow::validatePairDiscovery(discovery,
                                             sizeof(discovery),
                                             ESPNOW_NETWORK_ID,
                                             ESPNOW_PAIRING_KEY,
                                             sizeof(ESPNOW_PAIRING_KEY))) {
         updateCounter(&EspNowRtcmStats::pairAuthFailures);
+        Serial.printf("[PAIR][DIAG][REJECT] PAIR_DISCOVERY magic=%s version=%s type=%s role=%s network=%s auth=%s received_auth=0x%08lX expected_auth=0x%08lX\n",
+                      discovery.common.magic == rtcm_espnow::MAGIC ? "ok" : "bad",
+                      discovery.common.version == rtcm_espnow::VERSION ? "ok" : "bad",
+                      discovery.common.packetType == rtcm_espnow::PACKET_TYPE_PAIR_DISCOVERY ? "ok" : "bad",
+                      discovery.role == rtcm_espnow::ROLE_BASE ? "ok" : "bad",
+                      discovery.networkId == ESPNOW_NETWORK_ID ? "ok" : "bad",
+                      discovery.authTag == expectedAuth ? "ok" : "bad",
+                      static_cast<unsigned long>(discovery.authTag),
+                      static_cast<unsigned long>(expectedAuth));
         return;
     }
+    Serial.println("[PAIR][DIAG] PAIR_DISCOVERY validation=ok");
 
     rtcm_espnow::PairResponsePacket response{};
     response.common.magic = rtcm_espnow::MAGIC;
@@ -492,12 +574,18 @@ void processPendingPairDiscovery() {
         Serial.println("[PAIR][ERROR] Khong them duoc Base peer tam thoi");
         return;
     }
+    Serial.printf("[PAIR][DIAG] Temporary Base peer add=ok mac=%s channel=%u\n",
+                  macToString(sourceMac).c_str(),
+                  static_cast<unsigned>(getWiFiChannel()));
 
-    const esp_err_t result = esp_now_send(sourceMac,
-                                         reinterpret_cast<const uint8_t*>(&response),
-                                         sizeof(response));
-    if (result != ESP_OK) {
-        Serial.printf("[PAIR][ERROR] Gui PAIR_RESPONSE that bai: %d\n", result);
+    Serial.println("[PAIR][DIAG] Calling TX PAIR_RESPONSE");
+    const EspNowTxResult result = espnowTxSend(
+        sourceMac,
+        reinterpret_cast<const uint8_t*>(&response),
+        sizeof(response));
+    if (result != EspNowTxResult::Success) {
+        Serial.printf("[PAIR][ERROR] Gui PAIR_RESPONSE that bai: %s\n",
+                      espnowTxResultToString(result));
         return;
     }
 
@@ -530,6 +618,10 @@ void processPendingPairConfirm() {
         return;
     }
 
+    Serial.printf("[PAIR][DIAG] Process PAIR_CONFIRM src=%s len=%u\n",
+                  macToString(sourceMac).c_str(),
+                  static_cast<unsigned>(sizeof(confirm)));
+
     uint32_t expectedBaseNonce = 0;
     uint32_t expectedRoverNonce = 0;
     portENTER_CRITICAL(&pairingMux);
@@ -537,6 +629,8 @@ void processPendingPairConfirm() {
     expectedRoverNonce = pendingRoverNonce;
     portEXIT_CRITICAL(&pairingMux);
 
+    const uint32_t expectedAuth = rtcm_espnow::pairingAuthTag(
+        confirm, ESPNOW_PAIRING_KEY, sizeof(ESPNOW_PAIRING_KEY));
     if (!rtcm_espnow::validatePairConfirm(confirm,
                                           sizeof(confirm),
                                           ESPNOW_NETWORK_ID,
@@ -545,8 +639,20 @@ void processPendingPairConfirm() {
                                           ESPNOW_PAIRING_KEY,
                                           sizeof(ESPNOW_PAIRING_KEY))) {
         updateCounter(&EspNowRtcmStats::pairAuthFailures);
+        Serial.printf("[PAIR][DIAG][REJECT] PAIR_CONFIRM magic=%s version=%s type=%s role=%s network=%s base_nonce=%s rover_nonce=%s auth=%s received_auth=0x%08lX expected_auth=0x%08lX\n",
+                      confirm.common.magic == rtcm_espnow::MAGIC ? "ok" : "bad",
+                      confirm.common.version == rtcm_espnow::VERSION ? "ok" : "bad",
+                      confirm.common.packetType == rtcm_espnow::PACKET_TYPE_PAIR_CONFIRM ? "ok" : "bad",
+                      confirm.role == rtcm_espnow::ROLE_BASE ? "ok" : "bad",
+                      confirm.networkId == ESPNOW_NETWORK_ID ? "ok" : "bad",
+                      confirm.baseNonce == expectedBaseNonce ? "ok" : "bad",
+                      confirm.roverNonce == expectedRoverNonce ? "ok" : "bad",
+                      confirm.authTag == expectedAuth ? "ok" : "bad",
+                      static_cast<unsigned long>(confirm.authTag),
+                      static_cast<unsigned long>(expectedAuth));
         return;
     }
+    Serial.println("[PAIR][DIAG] PAIR_CONFIRM validation=ok");
 
     queuePairSave(sourceMac);
     updateCounter(&EspNowRtcmStats::pairConfirmsAccepted);
@@ -555,8 +661,8 @@ void processPendingPairConfirm() {
 
 } // namespace
 
-bool espnowSetup() {
-    if (ready) {
+bool espnowPrepare() {
+    if (coreReady) {
         return true;
     }
     if constexpr (WIFI_CONNECT_TO_ROUTER_ENABLED) {
@@ -564,22 +670,14 @@ bool espnowSetup() {
             Serial.println("[ESP-NOW][ERROR] Wi-Fi STA chua ket noi router/AP");
             return false;
         }
-        if (!configureWiFiForEspNowLongRange()) {
-            return false;
-        }
-    } else if (!setupEspNowStaRadio()) {
+    }
+    if (!wifiRadioIsReady()) {
+        Serial.println("[ESP-NOW][ERROR] Wi-Fi radio chua duoc cau hinh");
         return false;
     }
+    Serial.printf("[ESP-NOW] Reuse preconfigured Wi-Fi radio, channel=%u\n",
+                  getWiFiChannel());
 
-    setupPairingButton();
-    loadActiveBaseMac();
-    if (!hasActiveBaseMac && !ESPNOW_PAIRING_ENABLED) {
-        Serial.println("[ESP-NOW][ERROR] Chua co MAC Base va pairing dang tat");
-        return false;
-    }
-    if (!hasActiveBaseMac) {
-        Serial.println("[ESP-NOW][WARN] Chua co MAC Base; chi cho pairing mode");
-    }
     if (ESPNOW_ENCRYPTION_ENABLED && !espnowSecurityKeysAreConfigured()) {
         Serial.println("[ESP-NOW][ERROR] Ma hoa da bat nhung PMK/LMK chua duoc provision");
         return false;
@@ -617,26 +715,57 @@ bool espnowSetup() {
         receiveQueue = nullptr;
         return false;
     }
-    if (hasActiveBaseMac && !configurePeer(getWiFiChannel())) {
+    if (!configureEspNowRate()) {
         esp_now_deinit();
         vQueueDelete(receiveQueue);
         receiveQueue = nullptr;
         return false;
     }
-    if constexpr (DEBUG_WEB_ENABLED && ESPNOW_RSSI_MONITOR_ENABLED) {
-        if (hasActiveBaseMac) {
-            setupRssiMonitor();
-        } else {
-            Serial.println("[ESP-NOW] RSSI monitor deferred until pairing completes");
-        }
-    } else if constexpr (DEBUG_WEB_ENABLED) {
-        Serial.println("[ESP-NOW] RSSI monitor disabled while debug web is enabled");
+    if (!espnowTxSetup()) {
+        Serial.println("[ESP-NOW][ERROR] Khong khoi tao duoc shared TX manager");
+        esp_now_deinit();
+        vQueueDelete(receiveQueue);
+        receiveQueue = nullptr;
+        return false;
+    }
+    pairDiagnosticQueue = xQueueCreate(PAIR_DIAGNOSTIC_QUEUE_LENGTH,
+                                       sizeof(PairRxDiagnosticEvent));
+    if (pairDiagnosticQueue == nullptr) {
+        Serial.println("[PAIR][DIAG][WARN] Khong tao duoc RX diagnostic queue");
+    } else {
+        Serial.println("[PAIR][DIAG] RX callback diagnostic queue ready");
+    }
+    coreReady = true;
+    Serial.printf("[ESP-NOW] Core ready, TX rate=%s\n", espNowTxRateToText());
+    return true;
+}
+
+bool espnowSetup() {
+    if (ready) {
+        return true;
+    }
+    if (!coreReady) {
+        Serial.println("[ESP-NOW][ERROR] Core/rate chua duoc khoi tao truoc SoftAP");
+        return false;
+    }
+
+    setupPairingButton();
+    loadActiveBaseMac();
+    if (!hasActiveBaseMac && !ESPNOW_PAIRING_ENABLED) {
+        Serial.println("[ESP-NOW][ERROR] Chua co MAC Base va pairing dang tat");
+        return false;
+    }
+    if (!hasActiveBaseMac) {
+        Serial.println("[ESP-NOW][WARN] Chua co MAC Base; chi cho pairing mode");
+    }
+    if (hasActiveBaseMac && !configurePeer(getWiFiChannel())) {
+        return false;
     }
 
     ready = true;
-    Serial.printf("[ESP-NOW] Ready, STA channel=%u, LR=%u Kbps, peer=%s\n",
+    Serial.printf("[ESP-NOW] Ready, STA channel=%u, TX rate=%s, peer=%s\n",
                   getWiFiChannel(),
-                  ESPNOW_USE_LR_250KBPS ? 250U : 500U,
+                  espNowTxRateToText(),
                   hasActiveBaseMac ? macToString(activeBaseMac).c_str() : "<none>");
     return true;
 }
@@ -657,6 +786,7 @@ void espnowLoop() {
         return;
     }
 
+    drainPairRxDiagnostics();
     commitPendingPairSave();
     processPendingPairDiscovery();
     processPendingPairConfirm();
@@ -727,11 +857,11 @@ bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence) {
     ack.frameSequence = frameSequence;
     ack.status = rtcm_espnow::ACK_STATUS_WRITTEN;
 
-    const esp_err_t result = esp_now_send(
+    const EspNowTxResult result = espnowTxSend(
         activeBaseMac,
         reinterpret_cast<const uint8_t*>(&ack),
         sizeof(ack));
-    if (result != ESP_OK) {
+    if (result != EspNowTxResult::Success) {
         updateCounter(&EspNowRtcmStats::ackSendFailures);
         return false;
     }

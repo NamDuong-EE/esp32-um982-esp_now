@@ -9,14 +9,9 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 
-#if __has_include(<esp_arduino_version.h>)
-#include <esp_arduino_version.h>
-#else
-#define ESP_ARDUINO_VERSION_MAJOR 2
-#endif
-
 #include "Prog_Config.h"
 #include "hardware/Espnow_handler.h"
+#include "hardware/Espnow_tx_manager.h"
 #include "hardware/Wifi_handler.h"
 #include "protocol/RtcmEspNowProtocol.h"
 
@@ -38,8 +33,6 @@ constexpr uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 QueueHandle_t relayFrameQueue = nullptr;
 QueueHandle_t relayAckQueue = nullptr;
-SemaphoreHandle_t sendCallbackSemaphore = nullptr;
-SemaphoreHandle_t relaySendMutex = nullptr;
 bool relayReady = false;
 uint8_t childMac[6] = {};
 bool hasChildMac = false;
@@ -59,9 +52,6 @@ rtcm_espnow::PairResponsePacket pendingPairResponsePacket{};
 bool waitingForAck = false;
 uint16_t expectedAckStreamId = 0;
 uint32_t expectedAckSequence = 0;
-bool waitingForSendCallback = false;
-bool lastSendSucceeded = false;
-uint8_t expectedSendMac[6] = {};
 
 void incrementStat(uint32_t RelayStats::*member, uint32_t amount = 1) {
     portENTER_CRITICAL(&statsMux);
@@ -79,6 +69,19 @@ void setStoredChildStat(bool stored) {
     portENTER_CRITICAL(&statsMux);
     stats.hasStoredChildMac = stored;
     portEXIT_CRITICAL(&statsMux);
+}
+
+bool isChildPairingActive() {
+    portENTER_CRITICAL(&relayMux);
+    const bool active = childPairingActive;
+    portEXIT_CRITICAL(&relayMux);
+    return active;
+}
+
+void clearWaitingForAck() {
+    portENTER_CRITICAL(&relayMux);
+    waitingForAck = false;
+    portEXIT_CRITICAL(&relayMux);
 }
 
 String macToString(const uint8_t* mac) {
@@ -132,57 +135,27 @@ bool addPeer(const uint8_t* mac, bool encrypted) {
     return true;
 }
 
-#if ESP_ARDUINO_VERSION_MAJOR >= 3
-void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
-    const uint8_t* destinationMac = info == nullptr ? nullptr : info->des_addr;
-#else
-void onDataSent(const uint8_t* destinationMac, esp_now_send_status_t status) {
-#endif
-    bool matches = false;
-    portENTER_CRITICAL(&relayMux);
-    matches = waitingForSendCallback && destinationMac != nullptr &&
-              std::memcmp(destinationMac, expectedSendMac, 6) == 0;
-    if (matches) {
-        lastSendSucceeded = status == ESP_NOW_SEND_SUCCESS;
-    }
-    portEXIT_CRITICAL(&relayMux);
-    if (matches && sendCallbackSemaphore != nullptr) {
-        xSemaphoreGive(sendCallbackSemaphore);
-    }
-}
-
 bool sendPacketSync(const uint8_t* destinationMac,
                     const uint8_t* packet,
                     std::size_t packetLength) {
-    if (destinationMac == nullptr || packet == nullptr || packetLength == 0 ||
-        sendCallbackSemaphore == nullptr || relaySendMutex == nullptr ||
-        xSemaphoreTake(relaySendMutex,
-                       pdMS_TO_TICKS(RELAY_SEND_CALLBACK_TIMEOUT_MS)) != pdTRUE) {
-        return false;
+    const EspNowTxResult result = espnowTxSend(destinationMac, packet, packetLength);
+    if (result == EspNowTxResult::Success) {
+        return true;
     }
 
-    while (xSemaphoreTake(sendCallbackSemaphore, 0) == pdTRUE) {
+    incrementStat(&RelayStats::sendFailures);
+    switch (result) {
+        case EspNowTxResult::CallbackTimeout:
+            incrementStat(&RelayStats::sendCallbackTimeouts);
+            break;
+        case EspNowTxResult::DeliveryFailed:
+            incrementStat(&RelayStats::sendDeliveryFailures);
+            break;
+        default:
+            incrementStat(&RelayStats::sendImmediateErrors);
+            break;
     }
-    portENTER_CRITICAL(&relayMux);
-    std::memcpy(expectedSendMac, destinationMac, 6);
-    lastSendSucceeded = false;
-    waitingForSendCallback = true;
-    portEXIT_CRITICAL(&relayMux);
-
-    const esp_err_t queued = esp_now_send(destinationMac, packet, packetLength);
-    BaseType_t callbackReceived = pdFALSE;
-    if (queued == ESP_OK) {
-        callbackReceived = xSemaphoreTake(
-            sendCallbackSemaphore,
-            pdMS_TO_TICKS(RELAY_SEND_CALLBACK_TIMEOUT_MS));
-    }
-
-    portENTER_CRITICAL(&relayMux);
-    const bool succeeded = callbackReceived == pdTRUE && lastSendSucceeded;
-    waitingForSendCallback = false;
-    portEXIT_CRITICAL(&relayMux);
-    xSemaphoreGive(relaySendMutex);
-    return succeeded;
+    return false;
 }
 
 bool loadStoredChildMac(uint8_t mac[6]) {
@@ -224,19 +197,36 @@ void startChildPairing() {
     if (!relayReady || !espnowGetBaseMac(baseMac)) {
         return;
     }
-    if (!addPeer(BROADCAST_MAC, false)) {
-        return;
-    }
     const uint32_t now = millis();
     portENTER_CRITICAL(&relayMux);
     childPairingActive = true;
     pendingPairResponse = false;
+    waitingForAck = false;
     childPairingEndsAtMs = now + PAIRING_WINDOW_MS;
     childPairingBaseNonce = esp_random();
     lastDiscoverySentAtMs = 0;
     discoveryTxLogged = false;
     portEXIT_CRITICAL(&relayMux);
     setChildPairingStat(true);
+
+    // RTCM received before/during pairing is stale for the new child and must
+    // not compete with PAIR_DISCOVERY on the shared ESP-NOW transmitter.
+    if (relayFrameQueue != nullptr) {
+        const uint32_t dropped =
+            static_cast<uint32_t>(uxQueueMessagesWaiting(relayFrameQueue));
+        xQueueReset(relayFrameQueue);
+        if (dropped > 0) {
+            incrementStat(&RelayStats::framesSuppressedDuringPairing, dropped);
+            Serial.printf("[RELAY][PAIR] Dropped %lu queued RTCM frame(s)\n",
+                          static_cast<unsigned long>(dropped));
+        }
+        portENTER_CRITICAL(&statsMux);
+        stats.queueDepth = 0;
+        portEXIT_CRITICAL(&statsMux);
+    }
+    if (relayAckQueue != nullptr) {
+        xQueueReset(relayAckQueue);
+    }
     Serial.printf("[RELAY][PAIR] Child pairing mode ON for %lu ms\n",
                   static_cast<unsigned long>(PAIRING_WINDOW_MS));
 }
@@ -272,7 +262,6 @@ void sendPairDiscovery() {
             Serial.println("[RELAY][PAIR] PAIR_DISCOVERY radio TX confirmed");
         }
     } else {
-        incrementStat(&RelayStats::sendFailures);
         Serial.println("[RELAY][PAIR][WARN] PAIR_DISCOVERY send callback failed");
     }
 }
@@ -295,6 +284,13 @@ void processPairResponse() {
         return;
     }
 
+    Serial.printf("[RELAY][PAIR][DIAG] Process PAIR_RESPONSE src=%s len=%u expected_base_nonce=0x%08lX\n",
+                  macToString(sourceMac).c_str(),
+                  static_cast<unsigned>(sizeof(response)),
+                  static_cast<unsigned long>(expectedNonce));
+
+    const uint32_t expectedAuth = rtcm_espnow::pairingAuthTag(
+        response, ESPNOW_PAIRING_KEY, sizeof(ESPNOW_PAIRING_KEY));
     if (!rtcm_espnow::validatePairResponse(response,
                                            sizeof(response),
                                            ESPNOW_NETWORK_ID,
@@ -302,12 +298,26 @@ void processPairResponse() {
                                            ESPNOW_PAIRING_KEY,
                                            sizeof(ESPNOW_PAIRING_KEY))) {
         incrementStat(&RelayStats::childPairAuthFailures);
+        Serial.printf("[RELAY][PAIR][DIAG][REJECT] PAIR_RESPONSE magic=%s version=%s type=%s role=%s network=%s nonce=%s auth=%s received_auth=0x%08lX expected_auth=0x%08lX\n",
+                      response.common.magic == rtcm_espnow::MAGIC ? "ok" : "bad",
+                      response.common.version == rtcm_espnow::VERSION ? "ok" : "bad",
+                      response.common.packetType == rtcm_espnow::PACKET_TYPE_PAIR_RESPONSE ? "ok" : "bad",
+                      response.role == rtcm_espnow::ROLE_ROVER ? "ok" : "bad",
+                      response.networkId == ESPNOW_NETWORK_ID ? "ok" : "bad",
+                      response.baseNonceEcho == expectedNonce ? "ok" : "bad",
+                      response.authTag == expectedAuth ? "ok" : "bad",
+                      static_cast<unsigned long>(response.authTag),
+                      static_cast<unsigned long>(expectedAuth));
         return;
     }
+    Serial.println("[RELAY][PAIR][DIAG] PAIR_RESPONSE validation=ok");
     incrementStat(&RelayStats::childPairResponsesReceived);
     if (!addPeer(sourceMac, false)) {
+        Serial.println("[RELAY][PAIR][DIAG][REJECT] Temporary Child peer add=failed");
         return;
     }
+    Serial.printf("[RELAY][PAIR][DIAG] Temporary Child peer add=ok channel=%u\n",
+                  static_cast<unsigned>(getWiFiChannel()));
 
     rtcm_espnow::PairConfirmPacket confirm{};
     confirm.common.magic = rtcm_espnow::MAGIC;
@@ -320,10 +330,10 @@ void processPairResponse() {
     confirm.authTag = rtcm_espnow::pairingAuthTag(confirm,
                                                   ESPNOW_PAIRING_KEY,
                                                   sizeof(ESPNOW_PAIRING_KEY));
+    Serial.println("[RELAY][PAIR][DIAG] Calling TX PAIR_CONFIRM");
     if (!sendPacketSync(sourceMac,
                         reinterpret_cast<const uint8_t*>(&confirm),
                         sizeof(confirm))) {
-        incrementStat(&RelayStats::sendFailures);
         Serial.println("[RELAY][PAIR][ERROR] PAIR_CONFIRM send callback failed");
         return;
     }
@@ -347,12 +357,14 @@ bool sendFragment(const uint8_t* child,
                   const uint8_t* packet,
                   std::size_t packetLength) {
     for (uint8_t attempt = 0; attempt <= RELAY_FRAGMENT_SEND_RETRY_COUNT; ++attempt) {
+        if (isChildPairingActive()) {
+            return false;
+        }
         if (sendPacketSync(child, packet, packetLength)) {
             incrementStat(&RelayStats::fragmentsSent);
             vTaskDelay(pdMS_TO_TICKS(RELAY_FRAGMENT_GAP_MS));
             return true;
         }
-        incrementStat(&RelayStats::sendFailures);
         vTaskDelay(pdMS_TO_TICKS(5));
     }
     return false;
@@ -363,6 +375,10 @@ bool sendFrame(const RelayFrame& relayFrame) {
     const uint8_t fragmentCount = rtcm_espnow::expectedFragmentCount(relayFrame.frameLength);
 
     for (uint8_t attempt = 0; attempt <= RELAY_FRAME_RETRY_COUNT; ++attempt) {
+        if (isChildPairingActive()) {
+            clearWaitingForAck();
+            return false;
+        }
         RelayAckEvent staleAck{};
         while (xQueueReceive(relayAckQueue, &staleAck, 0) == pdTRUE) {
         }
@@ -374,6 +390,10 @@ bool sendFrame(const RelayFrame& relayFrame) {
 
         bool allFragmentsSent = true;
         for (uint8_t index = 0; index < fragmentCount; ++index) {
+            if (isChildPairingActive()) {
+                clearWaitingForAck();
+                return false;
+            }
             const uint16_t payloadLength =
                 rtcm_espnow::expectedFragmentPayloadLength(relayFrame.frameLength, index);
             const std::size_t offset =
@@ -410,6 +430,10 @@ bool sendFrame(const RelayFrame& relayFrame) {
                 portEXIT_CRITICAL(&statsMux);
                 return true;
             }
+            if (isChildPairingActive()) {
+                clearWaitingForAck();
+                return false;
+            }
             incrementStat(&RelayStats::ackTimeouts);
         }
         if (attempt < RELAY_FRAME_RETRY_COUNT) {
@@ -417,9 +441,7 @@ bool sendFrame(const RelayFrame& relayFrame) {
         }
     }
 
-    portENTER_CRITICAL(&relayMux);
-    waitingForAck = false;
-    portEXIT_CRITICAL(&relayMux);
+    clearWaitingForAck();
     return false;
 }
 
@@ -432,13 +454,16 @@ bool relaySetup() {
     if (!espnowIsReady()) {
         return false;
     }
+    // Register the broadcast peer before RTCM tasks start. Child pairing then
+    // never mutates this peer while downstream transmissions are in flight.
+    if (!addPeer(BROADCAST_MAC, false)) {
+        Serial.println("[RELAY][ERROR] Khong cau hinh duoc broadcast pairing peer");
+        return false;
+    }
     relayFrameQueue = xQueueCreate(RELAY_QUEUE_LENGTH, sizeof(RelayFrame));
     relayAckQueue = xQueueCreate(4, sizeof(RelayAckEvent));
-    sendCallbackSemaphore = xSemaphoreCreateBinary();
-    relaySendMutex = xSemaphoreCreateMutex();
-    if (relayFrameQueue == nullptr || relayAckQueue == nullptr ||
-        sendCallbackSemaphore == nullptr || relaySendMutex == nullptr) {
-        Serial.println("[RELAY][ERROR] Khong tao duoc relay queue/semaphore");
+    if (relayFrameQueue == nullptr || relayAckQueue == nullptr) {
+        Serial.println("[RELAY][ERROR] Khong tao duoc relay queue");
         if (relayFrameQueue != nullptr) {
             vQueueDelete(relayFrameQueue);
             relayFrameQueue = nullptr;
@@ -447,21 +472,6 @@ bool relaySetup() {
             vQueueDelete(relayAckQueue);
             relayAckQueue = nullptr;
         }
-        if (sendCallbackSemaphore != nullptr) {
-            vSemaphoreDelete(sendCallbackSemaphore);
-            sendCallbackSemaphore = nullptr;
-        }
-        if (relaySendMutex != nullptr) {
-            vSemaphoreDelete(relaySendMutex);
-            relaySendMutex = nullptr;
-        }
-        return false;
-    }
-
-    const esp_err_t callbackResult = esp_now_register_send_cb(onDataSent);
-    if (callbackResult != ESP_OK) {
-        Serial.printf("[RELAY][ERROR] Khong dang ky duoc send callback: %d\n",
-                      callbackResult);
         return false;
     }
 
@@ -481,6 +491,10 @@ bool relaySetup() {
 
 bool relayIsReady() {
     return relayReady;
+}
+
+bool relayIsChildPairingActive() {
+    return ROVER_RELAY_MODE && isChildPairingActive();
 }
 
 void relayLoop() {
@@ -538,6 +552,10 @@ bool relayQueueFrame(const uint8_t* frame,
         frameLength > rtcm_espnow::MAX_RTCM_FRAME_SIZE) {
         return false;
     }
+    if (isChildPairingActive()) {
+        incrementStat(&RelayStats::framesSuppressedDuringPairing);
+        return false;
+    }
     if (!hasChildMac) {
         incrementStat(&RelayStats::framesWithoutChild);
         return false;
@@ -561,6 +579,10 @@ bool relayProcessNextFrame(TickType_t waitTicks) {
         vTaskDelay(waitTicks);
         return false;
     }
+    if (isChildPairingActive()) {
+        vTaskDelay(waitTicks);
+        return false;
+    }
     RelayFrame frame{};
     if (xQueueReceive(relayFrameQueue, &frame, waitTicks) != pdTRUE) {
         return false;
@@ -568,7 +590,20 @@ bool relayProcessNextFrame(TickType_t waitTicks) {
     portENTER_CRITICAL(&statsMux);
     stats.queueDepth = static_cast<uint32_t>(uxQueueMessagesWaiting(relayFrameQueue));
     portEXIT_CRITICAL(&statsMux);
-    return sendFrame(frame);
+    if (isChildPairingActive()) {
+        incrementStat(&RelayStats::framesSuppressedDuringPairing);
+        return false;
+    }
+    const bool sent = sendFrame(frame);
+    if (!sent) {
+        if (isChildPairingActive()) {
+            incrementStat(&RelayStats::framesSuppressedDuringPairing);
+        } else {
+            incrementStat(&RelayStats::backoffEvents);
+            vTaskDelay(pdMS_TO_TICKS(RELAY_FAILED_FRAME_BACKOFF_MS));
+        }
+    }
+    return sent;
 }
 
 bool relayHandleReceivedPacket(const uint8_t* sourceMac,
@@ -617,16 +652,6 @@ bool relayHandleReceivedPacket(const uint8_t* sourceMac,
         xQueueSend(relayAckQueue, &event, 0);
     }
     return true;
-}
-
-void relayRecordChildRssi(const uint8_t* sourceMac, int8_t rssiDbm) {
-    if (!ROVER_RELAY_MODE || !isChild(sourceMac)) {
-        return;
-    }
-    portENTER_CRITICAL(&statsMux);
-    stats.hasChildRssi = true;
-    stats.lastChildRssiDbm = rssiDbm;
-    portEXIT_CRITICAL(&statsMux);
 }
 
 RelayStats relayGetStats() {

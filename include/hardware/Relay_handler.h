@@ -11,12 +11,17 @@ struct RelayStats {
     uint32_t framesAcked;
     uint32_t fragmentsSent;
     uint32_t sendFailures;
+    uint32_t sendImmediateErrors;
+    uint32_t sendCallbackTimeouts;
+    uint32_t sendDeliveryFailures;
     uint32_t ackTimeouts;
     uint32_t frameRetries;
+    uint32_t backoffEvents;
     uint32_t queueOverflow;
     uint32_t queueHighWater;
     uint32_t queueDepth;
     uint32_t framesWithoutChild;
+    uint32_t framesSuppressedDuringPairing;
     uint32_t childPairDiscoveriesSent;
     uint32_t childPairResponsesReceived;
     uint32_t childPairConfirmsSent;
@@ -24,12 +29,11 @@ struct RelayStats {
     uint32_t lastAckMillis;
     bool hasStoredChildMac;
     bool childPairingActive;
-    bool hasChildRssi;
-    int8_t lastChildRssiDbm;
 };
 
 bool relaySetup();
 bool relayIsReady();
+bool relayIsChildPairingActive();
 void relayLoop();
 bool relayQueueFrame(const uint8_t* frame,
                      uint16_t frameLength,
@@ -39,7 +43,6 @@ bool relayProcessNextFrame(TickType_t waitTicks);
 bool relayHandleReceivedPacket(const uint8_t* sourceMac,
                                const uint8_t* data,
                                int length);
-void relayRecordChildRssi(const uint8_t* sourceMac, int8_t rssiDbm);
 RelayStats relayGetStats();
 bool relayGetChildMac(uint8_t mac[6]);
 

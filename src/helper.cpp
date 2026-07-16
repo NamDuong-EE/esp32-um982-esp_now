@@ -109,7 +109,6 @@ String formDeviceHealthString()
     unsigned long uptime_s = millis() / 1000;
     uint32_t freeHeap = ESP.getFreeHeap();
 
-    int32_t rssi = WIFI_CONNECT_TO_ROUTER_ENABLED && WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : -127;
     String connected_via = WIFI_CONNECT_TO_ROUTER_ENABLED ? "WiFi" : "ESP-NOW_STA";
 
     bool mqttOk = isMqttConnected();
@@ -124,8 +123,6 @@ String formDeviceHealthString()
     const uint32_t frameAgeMs = espnowStats.lastValidFrameMillis == 0
                                     ? UINT32_MAX
                                     : millis() - espnowStats.lastValidFrameMillis;
-    const bool hasEspNowRssi = espnowStats.hasRssi;
-    const String espnowRssiValue = hasEspNowRssi ? String(espnowStats.lastRssiDbm) : "null";
     uint8_t activeBaseMac[6] = {};
     const bool hasActiveBaseMac = espnowGetBaseMac(activeBaseMac);
     char activeBaseMacText[18];
@@ -136,8 +133,8 @@ String formDeviceHealthString()
     // 2. Đóng gói thành JSON
     char healthPayload[1280];
     snprintf(healthPayload, sizeof(healthPayload),
-             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"rssi_dbm\":%d,\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"base_mac\":\"%s\",\"base_mac_stored\":%s,\"pairing_active\":%s,\"pair_discovery_rx\":%lu,\"pair_response_tx\":%lu,\"pair_confirm_ok\":%lu,\"pair_auth_fail\":%lu,\"espnow_rssi_dbm\":%s,\"gnss_data_ok\":%s,\"packets_received\":%lu,\"packets_wrong_source\":%lu,\"packets_invalid\":%lu,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_queue_hwm\":%lu,\"rtcm_duplicates\":%lu,\"rtcm_timeouts\":%lu,\"rtcm_sequence_gaps\":%lu,\"uart_write_errors\":%lu,\"ack_queued\":%lu,\"ack_send_fail\":%lu,\"last_rtcm_age_ms\":%lu}",
-             uptime_s, freeHeap, connected_via.c_str(), rssi,
+             "{\"uptime_s\":%lu,\"free_heap_bytes\":%u,\"connected_via\":\"%s\",\"mqtt_ok\":%s,\"espnow_ready\":%s,\"base_provisioned\":%s,\"base_mac\":\"%s\",\"base_mac_stored\":%s,\"pairing_active\":%s,\"pair_discovery_rx\":%lu,\"pair_response_tx\":%lu,\"pair_confirm_ok\":%lu,\"pair_auth_fail\":%lu,\"gnss_data_ok\":%s,\"packets_received\":%lu,\"packets_wrong_source\":%lu,\"packets_invalid\":%lu,\"rtcm_frames\":%lu,\"rtcm_crc_errors\":%lu,\"rtcm_queue_overflow\":%lu,\"rtcm_queue_hwm\":%lu,\"rtcm_duplicates\":%lu,\"rtcm_timeouts\":%lu,\"rtcm_sequence_gaps\":%lu,\"uart_write_errors\":%lu,\"ack_queued\":%lu,\"ack_send_fail\":%lu,\"last_rtcm_age_ms\":%lu}",
+             uptime_s, freeHeap, connected_via.c_str(),
              mqttOk ? "true" : "false",
              espnowIsReady() ? "true" : "false",
              hasActiveBaseMac ? "true" : "false",
@@ -148,7 +145,6 @@ String formDeviceHealthString()
              static_cast<unsigned long>(espnowStats.pairResponsesSent),
              static_cast<unsigned long>(espnowStats.pairConfirmsAccepted),
              static_cast<unsigned long>(espnowStats.pairAuthFailures),
-             espnowRssiValue.c_str(),
              gnssOk ? "true" : "false",
              static_cast<unsigned long>(espnowStats.packetsReceived),
              static_cast<unsigned long>(espnowStats.packetsWrongSource),
@@ -184,7 +180,6 @@ String formDeviceHealthString()
         payload += ",\"child_provisioned\":" + String(hasChild ? "true" : "false");
         payload += ",\"child_mac\":\"" + String(childMacText) + "\"";
         payload += ",\"child_pairing_active\":" + String(relay.childPairingActive ? "true" : "false");
-        payload += ",\"child_rssi_dbm\":" + String(relay.hasChildRssi ? String(relay.lastChildRssiDbm) : "null");
         payload += ",\"relay_frames_queued\":" + String(relay.framesQueued);
         payload += ",\"relay_frames_sent\":" + String(relay.framesSent);
         payload += ",\"relay_frames_acked\":" + String(relay.framesAcked);
@@ -192,7 +187,12 @@ String formDeviceHealthString()
         payload += ",\"relay_ack_timeouts\":" + String(relay.ackTimeouts);
         payload += ",\"relay_queue_depth\":" + String(relay.queueDepth);
         payload += ",\"relay_queue_overflow\":" + String(relay.queueOverflow);
+        payload += ",\"relay_frames_suppressed_pairing\":" + String(relay.framesSuppressedDuringPairing);
         payload += ",\"relay_send_failures\":" + String(relay.sendFailures);
+        payload += ",\"relay_send_immediate_errors\":" + String(relay.sendImmediateErrors);
+        payload += ",\"relay_send_callback_timeouts\":" + String(relay.sendCallbackTimeouts);
+        payload += ",\"relay_send_delivery_failures\":" + String(relay.sendDeliveryFailures);
+        payload += ",\"relay_backoff_events\":" + String(relay.backoffEvents);
         payload += "}";
     }
     return payload;
