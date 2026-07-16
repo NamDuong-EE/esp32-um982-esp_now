@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Silicon Labs CP210x -->
+    <usb-device vendor-id="4292" />
+    <!-- QinHeng CH340/CH341/CH9102 -->
+    <usb-device vendor-id="6790" />
+    <!-- FTDI -->
+    <usb-device vendor-id="1027" />
+    <!-- Prolific PL2303 -->
+    <usb-device vendor-id="1659" />
+    <!-- Espressif native USB CDC/JTAG -->
+    <usb-device vendor-id="12346" />
+</resources>

@@ -24,12 +24,14 @@ struct GgaDebugSnapshot {
     bool valid;
     double lat;
     double lon;
+    double heightM;
     uint8_t fixQuality;
     uint8_t satellites;
     uint32_t lastUpdateMs;
 };
 
 String formDeviceHealthString();
+String formSerialDebugStatusString();
 int publishGGA(String& nmeaBuffer);
 GgaDebugSnapshot getGgaDebugSnapshot();
 

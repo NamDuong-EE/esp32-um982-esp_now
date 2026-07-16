@@ -302,10 +302,10 @@ Nếu muốn bật lại MQTT:
 
 ### Debug web SoftAP tùy chọn
 
-Debug web được điều khiển trong `include/Prog_Config.h` và hiện đang bật mặc định:
+Debug web được điều khiển trong `include/Prog_Config.h` và hiện đang tắt mặc định:
 
 ```cpp
-#define DEBUG_WEB_ENABLED 1
+#define DEBUG_WEB_ENABLED 0
 ```
 
 Khi bật, Rover chạy `WIFI_AP_STA`. Hai operating mode dùng hai giao diện và API riêng nhưng vẫn dùng chung một radio, một SoftAP và IP `192.168.4.1`; firmware không mở hai web server đồng thời.
@@ -332,10 +332,12 @@ SoftAP dùng cùng `ESPNOW_WIFI_CHANNEL` với ESP-NOW để tránh đổi chann
 
 SoftAP luôn được khởi động sau khi Wi-Fi mode/channel, ESP-NOW LR rate và các peer đã được cấu hình. Đây là cùng thứ tự dùng ở luồng pairing ổn định ban đầu; SoftAP không chen giữa bước khởi tạo core và bước đăng ký peer.
 
-- `lat`, `lon`
+- `lat`, `lon`, `height_m`
 - `rtk_status` là số GGA fix quality, ví dụ `4` hoặc `5`
 - `satellites`
 - `last_gga_age_ms`
+
+Khi dùng ứng dụng Android tại `android-debug-viewer`, không cần bật SoftAP. Firmware phát dòng `[DEBUG_STATUS]` qua USB serial mỗi giây với cùng dữ liệu GNSS/RTCM của Web Debug; `[HEALTH]` chi tiết vẫn giữ chu kỳ 30 giây.
 
 Normal web hiển thị health Rover hiện tại: ESP-NOW ready, Base pairing, RTCM frame, CRC, queue, sequence gap, ACK và free heap.
 

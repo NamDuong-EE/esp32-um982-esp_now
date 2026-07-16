@@ -17,6 +17,7 @@ inline constexpr int LED_PIN = 2;
 // ================= TASKS =================
 inline constexpr uint32_t MUTEX_TIMEOUT_MS = 1500;
 inline constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
+inline constexpr uint32_t SERIAL_DEBUG_STATUS_INTERVAL_MS = 1000;
 
 // ================= OPERATING MODE =================
 // Override from PlatformIO with -D ROVER_RELAY_MODE_ENABLED=1 to build the

@@ -59,6 +59,8 @@ void setup() {
     Serial.println("       ESP32U GNSS ROVER KHOI DONG       ");
     Serial.println("=========================================");
     Serial.printf("[MODE] %s\n", ROVER_RELAY_MODE ? "relay" : "normal");
+    Serial.printf("[SERIAL_DEBUG] DEBUG_STATUS interval=%lu ms\n",
+                  static_cast<unsigned long>(SERIAL_DEBUG_STATUS_INTERVAL_MS));
 
     if (Serial1.setTxBufferSize(GNSS_TX_BUFFER_SIZE) != GNSS_TX_BUFFER_SIZE) {
         Serial.println("[GNSS][ERROR] Khong dat duoc UART TX buffer");
@@ -187,19 +189,26 @@ void gnssPublishTask(void* parameter) {
 
 void healthCheckTask(void* parameter) {
     (void)parameter;
+    uint32_t lastHealthMs = millis() - HEALTH_INTERVAL_MS;
     while (true) {
-        const String payload = formDeviceHealthString();
-        Serial.print("[HEALTH] ");
-        Serial.println(payload);
-        if constexpr (MQTT_PUBLISH_HEALTH_ENABLED) {
-            if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
-                if (mqtt.connected()) {
-                    publishHealth(payload);
+        const uint32_t now = millis();
+        if (now - lastHealthMs >= HEALTH_INTERVAL_MS) {
+            lastHealthMs = now;
+            const String payload = formDeviceHealthString();
+            Serial.print("[HEALTH] ");
+            Serial.println(payload);
+            if constexpr (MQTT_PUBLISH_HEALTH_ENABLED) {
+                if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+                    if (mqtt.connected()) {
+                        publishHealth(payload);
+                    }
+                    xSemaphoreGive(mqttClientMutex);
                 }
-                xSemaphoreGive(mqttClientMutex);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(HEALTH_INTERVAL_MS));
+        Serial.print("[DEBUG_STATUS] ");
+        Serial.println(formSerialDebugStatusString());
+        vTaskDelay(pdMS_TO_TICKS(SERIAL_DEBUG_STATUS_INTERVAL_MS));
     }
 }
 

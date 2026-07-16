@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Rover OTG Debug</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      --bg:#f5f7f8; --panel:#ffffff; --panel2:#f3f7f7; --line:#d9e1e3;
+      --text:#1c2526; --muted:#607074; --accent:#087f5b;
+      --ok:#087f5b; --warn:#b35c00; --bad:#c92a2a;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; background:var(--bg); color:var(--text); }
+    header {
+      position:sticky; top:0; z-index:5; padding:max(14px,env(safe-area-inset-top)) 15px 13px;
+      background:rgba(255,255,255,.97); border-bottom:1px solid var(--line);
+    }
+    .top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    h1 { margin:0; font-size:19px; }
+    .eyebrow { color:var(--accent); font-size:10px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; }
+    .actions { display:flex; gap:6px; }
+    button, input { border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--text); font:inherit; }
+    button { padding:9px 11px; font-weight:700; }
+    button.primary { color:#fff; background:#087f5b; border-color:#087f5b; }
+    .connection { display:flex; align-items:center; gap:8px; margin-top:9px; color:var(--muted); font-size:12px; }
+    .dot { width:9px; height:9px; border-radius:50%; background:var(--bad); }
+    .dot.on { background:var(--ok); box-shadow:0 0 8px rgba(8,127,91,.45); }
+    .mode { margin-left:auto; padding:3px 7px; border:1px solid var(--line); border-radius:999px; color:var(--accent); text-transform:uppercase; font-size:10px; font-weight:800; }
+    main { max-width:1050px; margin:auto; padding:14px 13px 30px; }
+    .section-title { display:flex; align-items:baseline; justify-content:space-between; margin:3px 2px 9px; }
+    .section-title h2 { margin:0; font-size:15px; }
+    .section-title span { color:var(--muted); font-size:11px; }
+    .gnss { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+    .card { padding:12px; min-height:83px; background:var(--panel); border:1px solid var(--line); border-radius:13px; }
+    .card.wide { grid-column:span 2; }
+    .label { color:var(--muted); font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+    .value { margin-top:8px; font-size:20px; font-weight:800; overflow-wrap:anywhere; }
+    .value.coord { font-size:17px; }
+    .value.ok { color:var(--ok); }
+    .value.warn { color:var(--warn); }
+    .value.bad { color:var(--bad); }
+    .panel { margin-top:15px; overflow:hidden; background:var(--panel); border:1px solid var(--line); border-radius:13px; }
+    .panel h3 { margin:0; padding:11px 12px; background:var(--panel2); border-bottom:1px solid var(--line); font-size:13px; }
+    table { width:100%; border-collapse:collapse; }
+    td { padding:9px 12px; border-bottom:1px solid rgba(36,64,67,.65); font-size:12px; }
+    tr:last-child td { border-bottom:0; }
+    td:first-child { color:var(--muted); }
+    td:last-child { text-align:right; font-weight:750; overflow-wrap:anywhere; }
+    td.ok { color:var(--ok); } td.bad { color:var(--bad); } td.warn { color:var(--warn); }
+    .terminal { margin-top:15px; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+    .terminal h3 { margin:0; padding:11px 12px; font-size:13px; }
+    .toolbar { display:grid; grid-template-columns:1fr auto auto; gap:7px; padding:8px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+    input { min-width:0; padding:9px 10px; }
+    .auto { display:flex; align-items:center; gap:4px; color:var(--muted); font-size:11px; }
+    .auto input { width:16px; height:16px; }
+    .log { height:34vh; min-height:220px; overflow:auto; padding:9px; background:#11191a; font:11px/1.5 ui-monospace,Consolas,monospace; }
+    .line { white-space:pre-wrap; overflow-wrap:anywhere; color:#d4e2e0; }
+    .line.error { color:var(--bad); } .line.warn { color:var(--warn); }
+    @media(min-width:720px) {
+      .gnss { grid-template-columns:repeat(5,minmax(0,1fr)); }
+      .card.wide { grid-column:span 1; }
+      .columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div><div class="eyebrow">USB OTG · GNSS/RTCM</div><h1>Rover Debug</h1></div>
+    <div class="actions"><button class="primary" onclick="connectUsb()">Connect</button><button onclick="disconnectUsb()">Disconnect</button></div>
+  </div>
+  <div class="connection"><span id="usbDot" class="dot"></span><span id="usbStatus">Initializing…</span><span id="mode" class="mode">--</span></div>
+</header>
+
+<main>
+  <div class="section-title"><h2>GNSS Position</h2><span id="ggaAge">Waiting for valid GGA</span></div>
+  <section class="gnss">
+    <div class="card"><div class="label">Latitude</div><div id="lat" class="value coord">--</div></div>
+    <div class="card"><div class="label">Longitude</div><div id="lon" class="value coord">--</div></div>
+    <div class="card"><div class="label">Height</div><div id="height" class="value">--</div></div>
+    <div class="card wide"><div class="label">RTK status</div><div id="rtk" class="value">--</div></div>
+    <div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div>
+  </section>
+
+  <div class="columns">
+    <section class="panel">
+      <h3 id="upTitle">Base → Rover · RTCM</h3>
+      <table><tbody id="upstream"></tbody></table>
+    </section>
+    <section id="downPanel" class="panel" hidden>
+      <h3>Relay → Child Rover · RTCM</h3>
+      <table><tbody id="downstream"></tbody></table>
+    </section>
+  </div>
+
+  <section class="terminal">
+    <h3>Terminal · Log serial</h3>
+    <div class="toolbar">
+      <input id="filter" type="search" placeholder="Filter log…" oninput="renderLogs()">
+      <label class="auto"><input id="autoScroll" type="checkbox" checked> Auto-scroll</label>
+      <button onclick="clearLogs()">Clear</button>
+    </div>
+    <div id="log" class="log"></div>
+  </section>
+</main>
+
+<script>
+  const MAX_LINES = 1200;
+  const logs = [];
+  const $ = id => document.getElementById(id);
+  const text = value => value === null || value === undefined || value === '' ? '--' : String(value);
+  const booleanText = value => value === true ? 'Yes' : value === false ? 'No' : text(value);
+  const ageText = value => value === null || value === undefined || Number(value) === 4294967295
+    ? '--' : Number(value) < 1000 ? `${value} ms` : `${(Number(value) / 1000).toFixed(1)} s`;
+
+  const normalUpFields = [
+    ['espnow_ready','ESP-NOW ready','bool'], ['paired','Base paired','bool'], ['mac','Base MAC'],
+    ['pairing_active','Pairing active','bool'], ['pair_confirm_ok','Pair confirms accepted'],
+    ['frames_received','RTCM frames received'], ['last_rtcm_age_ms','Last RTCM age','age'],
+    ['crc_errors','RTCM CRC errors','error'], ['queue_overflow','RTCM queue overflows','error'],
+    ['sequence_gaps','RTCM sequence gaps','error'], ['acks_sent','ACKs sent'],
+    ['ack_send_fail','ACK send failures','error'], ['free_heap_bytes','Free heap (bytes)']
+  ];
+  const relayUpFields = [
+    ['paired','Base paired','bool'], ['mac','Base MAC'], ['pairing_active','Pairing active','bool'],
+    ['frames_received','RTCM frames received'], ['crc_errors','RTCM CRC errors','error'],
+    ['queue_overflow','RTCM queue overflows','error'], ['acks_sent','ACKs sent'],
+    ['last_rtcm_age_ms','Last RTCM age','age'], ['free_heap_bytes','Free heap (bytes)']
+  ];
+  const downFields = [
+    ['paired','Child rover paired','bool'], ['mac','Child rover MAC'], ['pairing_active','Pairing active','bool'],
+    ['frames_queued','RTCM frames queued'], ['frames_sent','RTCM frames sent'],
+    ['frames_acked','RTCM frames acknowledged'], ['fragments_sent','Fragments sent'],
+    ['frame_retries','Frame retries','error'], ['ack_timeouts','ACK timeouts','error'],
+    ['send_failures','Total send failures','error'], ['send_immediate_errors','Immediate send errors','error'],
+    ['send_callback_timeouts','Send callback timeouts','error'], ['send_delivery_failures','Delivery failures','error'],
+    ['backoff_events','Backoff events','error'], ['frames_without_child','Frames without child','error'],
+    ['frames_suppressed_pairing','Frames suppressed during pairing'], ['last_ack_age_ms','Last ACK age','age']
+  ];
+
+  function connectUsb(){ if(window.Android) Android.connect(); }
+  function disconnectUsb(){ if(window.Android) Android.disconnect(); }
+  window.onUsbStatus = (message, connected) => {
+    $('usbStatus').textContent = message;
+    $('usbDot').classList.toggle('on', !!connected);
+  };
+
+  function cellClass(kind, value) {
+    if(kind === 'bool') return value === true ? 'ok' : 'bad';
+    if(kind === 'error') return Number(value || 0) === 0 ? 'ok' : 'bad';
+    return '';
+  }
+  function renderTable(target, source, fields) {
+    target.textContent = '';
+    fields.forEach(([key,label,kind]) => {
+      const row = document.createElement('tr');
+      const name = document.createElement('td'); name.textContent = label;
+      const value = document.createElement('td');
+      value.textContent = kind === 'bool' ? booleanText(source[key]) : kind === 'age' ? ageText(source[key]) : text(source[key]);
+      value.className = cellClass(kind, source[key]);
+      row.append(name,value); target.appendChild(row);
+    });
+  }
+  function setRtk(device, valid) {
+    const quality = Number(device.fix_quality || 0);
+    $('rtk').textContent = valid ? String(quality) : '--';
+    $('rtk').className = 'value ' + (quality === 4 ? 'ok' : quality === 5 ? 'warn' : 'bad');
+  }
+  function updateDashboard(data) {
+    const device = data.device || data.gga || {};
+    const valid = device.gga_valid === true || device.valid === true;
+    $('mode').textContent = data.mode || 'normal';
+    $('lat').textContent = valid ? Number(device.lat).toFixed(7) : '--';
+    $('lon').textContent = valid ? Number(device.lon).toFixed(7) : '--';
+    $('height').textContent = valid ? `${Number(device.height_m || 0).toFixed(3)} m` : '--';
+    $('sats').textContent = valid ? text(device.satellites) : '--';
+    $('ggaAge').textContent = valid ? `GGA age ${ageText(device.last_gga_age_ms)}` : 'Waiting for valid GGA';
+    setRtk(device, valid);
+
+    const up = data.upstream || {};
+    const relay = data.mode === 'relay';
+    const upDisplay = Object.assign({}, up, {free_heap_bytes:device.free_heap_bytes});
+    renderTable($('upstream'), upDisplay, relay ? relayUpFields : normalUpFields);
+    $('upTitle').textContent = relay ? 'Base → Relay · RTCM' : 'Base → Rover · RTCM';
+    $('downPanel').hidden = !relay;
+    if(relay) renderTable($('downstream'), data.downstream || {}, downFields);
+  }
+  function healthFallback(h) {
+    updateDashboard({
+      mode:h.mode || 'normal',
+      device:{gga_valid:h.gga_valid,lat:h.lat,lon:h.lon,height_m:h.height_m,fix_quality:h.fix_quality,rtk_status:h.rtk_status,satellites:h.satellites,last_gga_age_ms:h.last_gga_age_ms,free_heap_bytes:h.free_heap_bytes},
+      upstream:{espnow_ready:h.espnow_ready,paired:h.base_provisioned,mac:h.base_mac,pairing_active:h.pairing_active,pair_confirm_ok:h.pair_confirm_ok,frames_received:h.rtcm_frames,last_rtcm_age_ms:h.last_rtcm_age_ms,crc_errors:h.rtcm_crc_errors,queue_overflow:h.rtcm_queue_overflow,sequence_gaps:h.rtcm_sequence_gaps,acks_sent:h.ack_queued,ack_send_fail:h.ack_send_fail},
+      downstream:{paired:h.child_provisioned,mac:h.child_mac,pairing_active:h.child_pairing_active,frames_queued:h.relay_frames_queued,frames_sent:h.relay_frames_sent,frames_acked:h.relay_frames_acked,fragments_sent:h.relay_fragments_sent,frame_retries:h.relay_retries,ack_timeouts:h.relay_ack_timeouts,queue_depth:h.relay_queue_depth,queue_overflow:h.relay_queue_overflow,send_failures:h.relay_send_failures,send_immediate_errors:h.relay_send_immediate_errors,send_callback_timeouts:h.relay_send_callback_timeouts,send_delivery_failures:h.relay_send_delivery_failures,backoff_events:h.relay_backoff_events,frames_without_child:h.relay_frames_without_child,frames_suppressed_pairing:h.relay_frames_suppressed_pairing,last_ack_age_ms:h.relay_last_ack_age_ms}
+    });
+  }
+  function parseStructured(line) {
+    if(line.startsWith('[DEBUG_STATUS] ')) {
+      try { updateDashboard(JSON.parse(line.slice(15))); } catch (_) {}
+    } else if(line.startsWith('[HEALTH] ')) {
+      try { healthFallback(JSON.parse(line.slice(9))); } catch (_) {}
+    }
+  }
+  function classify(line) {
+    if(/\[ERROR\]|status=FAIL|callback=timeout|=failed/i.test(line)) return 'error';
+    if(/\[WARN\]|timeout/i.test(line)) return 'warn';
+    return '';
+  }
+  window.onSerialLine = line => {
+    logs.push({text:line,cls:classify(line)});
+    if(logs.length > MAX_LINES) logs.splice(0,logs.length-MAX_LINES);
+    parseStructured(line);
+    appendVisibleLine(logs[logs.length-1]);
+  };
+  function matchesFilter(entry) {
+    const query = $('filter').value.trim().toLowerCase();
+    return !query || entry.text.toLowerCase().includes(query);
+  }
+  function createLine(entry) {
+    const node = document.createElement('div'); node.className='line '+entry.cls; node.textContent=entry.text || ' '; return node;
+  }
+  function appendVisibleLine(entry) {
+    if(!matchesFilter(entry)) return;
+    const box=$('log'); box.appendChild(createLine(entry));
+    while(box.childElementCount>MAX_LINES) box.firstChild.remove();
+    if($('autoScroll').checked) box.scrollTop=box.scrollHeight;
+  }
+  function renderLogs() {
+    const box=$('log'); box.textContent=''; logs.filter(matchesFilter).forEach(entry=>box.appendChild(createLine(entry)));
+  }
+  function clearLogs(){ logs.length=0; $('log').textContent=''; }
+  window.addEventListener('load',()=>{ if(window.Android) Android.ready(); });
+</script>
+</body>
+</html>

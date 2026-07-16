@@ -63,6 +63,7 @@ int publishGGA(String &nmeaBuffer)
                     ggaDebugSnapshot.valid = true;
                     ggaDebugSnapshot.lat = ggaData.lat;
                     ggaDebugSnapshot.lon = ggaData.lon;
+                    ggaDebugSnapshot.heightM = ggaData.height_m;
                     ggaDebugSnapshot.fixQuality = static_cast<uint8_t>(ggaData.rtk_status.toInt());
                     ggaDebugSnapshot.satellites = static_cast<uint8_t>(ggaData.satellites.toInt());
                     ggaDebugSnapshot.lastUpdateMs = millis();
@@ -101,6 +102,101 @@ GgaDebugSnapshot getGgaDebugSnapshot()
         xSemaphoreGive(nmeaBufferMutex);
     }
     return snapshot;
+}
+
+String formSerialDebugStatusString()
+{
+    const GgaDebugSnapshot gga = getGgaDebugSnapshot();
+    const EspNowRtcmStats upstream = espnowGetStats();
+    const uint32_t now = millis();
+    uint8_t baseMac[6] = {};
+    const bool hasBase = espnowGetBaseMac(baseMac);
+    char baseMacText[18] = {};
+    if (hasBase) {
+        snprintf(baseMacText, sizeof(baseMacText), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 baseMac[0], baseMac[1], baseMac[2],
+                 baseMac[3], baseMac[4], baseMac[5]);
+    }
+
+    const char* rtkStatus = "Invalid";
+    switch (gga.fixQuality) {
+        case 1: rtkStatus = "GPS Fix"; break;
+        case 2: rtkStatus = "DGPS"; break;
+        case 4: rtkStatus = "RTK Fixed"; break;
+        case 5: rtkStatus = "RTK Float"; break;
+        default: break;
+    }
+
+    String payload;
+    payload.reserve(1800);
+    payload = "{\"mode\":\"";
+    payload += ROVER_RELAY_MODE ? "relay" : "normal";
+    payload += "\",\"device\":{";
+    payload += "\"gga_valid\":" + String(gga.valid ? "true" : "false");
+    payload += ",\"lat\":" + String(gga.lat, 7);
+    payload += ",\"lon\":" + String(gga.lon, 7);
+    payload += ",\"height_m\":" + String(gga.heightM, 3);
+    payload += ",\"fix_quality\":" + String(gga.fixQuality);
+    payload += ",\"rtk_status\":\"" + String(rtkStatus) + "\"";
+    payload += ",\"satellites\":" + String(gga.satellites);
+    payload += ",\"free_heap_bytes\":" + String(ESP.getFreeHeap());
+    payload += ",\"last_gga_age_ms\":";
+    payload += gga.valid ? String(now - gga.lastUpdateMs) : "null";
+    payload += "},\"upstream\":{";
+    payload += "\"espnow_ready\":" + String(espnowIsReady() ? "true" : "false");
+    payload += ",\"paired\":" + String(hasBase ? "true" : "false");
+    payload += ",\"mac\":\"" + String(baseMacText) + "\"";
+    payload += ",\"pairing_active\":" + String(upstream.pairingActive ? "true" : "false");
+    payload += ",\"pair_confirm_ok\":" + String(upstream.pairConfirmsAccepted);
+    payload += ",\"frames_received\":" + String(upstream.framesWritten);
+    payload += ",\"crc_errors\":" + String(upstream.crcErrors);
+    payload += ",\"queue_overflow\":" + String(upstream.queueOverflow);
+    payload += ",\"sequence_gaps\":" + String(upstream.sequenceGaps);
+    payload += ",\"acks_sent\":" + String(upstream.ackPacketsQueued);
+    payload += ",\"ack_send_fail\":" + String(upstream.ackSendFailures);
+    payload += ",\"last_rtcm_age_ms\":";
+    payload += upstream.lastValidFrameMillis == 0
+                   ? "null"
+                   : String(now - upstream.lastValidFrameMillis);
+    payload += "}";
+
+    if constexpr (ROVER_RELAY_MODE) {
+        const RelayStats downstream = relayGetStats();
+        uint8_t childMac[6] = {};
+        const bool hasChild = relayGetChildMac(childMac);
+        char childMacText[18] = {};
+        if (hasChild) {
+            snprintf(childMacText, sizeof(childMacText), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     childMac[0], childMac[1], childMac[2],
+                     childMac[3], childMac[4], childMac[5]);
+        }
+        payload += ",\"downstream\":{";
+        payload += "\"paired\":" + String(hasChild ? "true" : "false");
+        payload += ",\"mac\":\"" + String(childMacText) + "\"";
+        payload += ",\"pairing_active\":" + String(downstream.childPairingActive ? "true" : "false");
+        payload += ",\"frames_queued\":" + String(downstream.framesQueued);
+        payload += ",\"frames_sent\":" + String(downstream.framesSent);
+        payload += ",\"frames_acked\":" + String(downstream.framesAcked);
+        payload += ",\"fragments_sent\":" + String(downstream.fragmentsSent);
+        payload += ",\"frame_retries\":" + String(downstream.frameRetries);
+        payload += ",\"ack_timeouts\":" + String(downstream.ackTimeouts);
+        payload += ",\"queue_depth\":" + String(downstream.queueDepth);
+        payload += ",\"queue_overflow\":" + String(downstream.queueOverflow);
+        payload += ",\"send_failures\":" + String(downstream.sendFailures);
+        payload += ",\"send_immediate_errors\":" + String(downstream.sendImmediateErrors);
+        payload += ",\"send_callback_timeouts\":" + String(downstream.sendCallbackTimeouts);
+        payload += ",\"send_delivery_failures\":" + String(downstream.sendDeliveryFailures);
+        payload += ",\"backoff_events\":" + String(downstream.backoffEvents);
+        payload += ",\"frames_without_child\":" + String(downstream.framesWithoutChild);
+        payload += ",\"frames_suppressed_pairing\":" + String(downstream.framesSuppressedDuringPairing);
+        payload += ",\"last_ack_age_ms\":";
+        payload += downstream.lastAckMillis == 0
+                       ? "null"
+                       : String(now - downstream.lastAckMillis);
+        payload += "}";
+    }
+    payload += "}";
+    return payload;
 }
 
 String formDeviceHealthString()
