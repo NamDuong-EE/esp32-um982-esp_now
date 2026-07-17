@@ -69,6 +69,23 @@ bool validateRoverLlhStatus(const RoverLlhStatusPacket& packet,
            packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000;
 }
 
+bool validateRelayedRoverLlhStatus(const RelayedRoverLlhStatusPacket& packet,
+                                   std::size_t receivedLength) {
+    bool macConfigured = false;
+    bool macBroadcast = true;
+    for (uint8_t octet : packet.roverMac) {
+        macConfigured = macConfigured || octet != 0;
+        macBroadcast = macBroadcast && octet == 0xFF;
+    }
+    return receivedLength == sizeof(RelayedRoverLlhStatusPacket) &&
+           packet.common.magic == MAGIC &&
+           packet.common.version == VERSION &&
+           packet.common.packetType == PACKET_TYPE_RELAYED_ROVER_LLH_STATUS &&
+           macConfigured && !macBroadcast && (packet.roverMac[0] & 0x01U) == 0 &&
+           packet.latitudeE7 >= -900000000 && packet.latitudeE7 <= 900000000 &&
+           packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000;
+}
+
 uint32_t computePairingAuthTag(const uint8_t* data,
                                std::size_t lengthWithoutAuthTag,
                                const uint8_t* pairingKey,

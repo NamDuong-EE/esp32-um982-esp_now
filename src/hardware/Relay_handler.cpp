@@ -29,10 +29,16 @@ struct RelayAckEvent {
     uint32_t frameSequence;
 };
 
+struct RelayLlhEnvelope {
+    uint8_t childMac[6];
+    rtcm_espnow::RoverLlhStatusPacket packet;
+};
+
 constexpr uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 QueueHandle_t relayFrameQueue = nullptr;
 QueueHandle_t relayAckQueue = nullptr;
+QueueHandle_t relayLlhQueue = nullptr;
 bool relayReady = false;
 uint8_t childMac[6] = {};
 bool hasChildMac = false;
@@ -462,7 +468,8 @@ bool relaySetup() {
     }
     relayFrameQueue = xQueueCreate(RELAY_QUEUE_LENGTH, sizeof(RelayFrame));
     relayAckQueue = xQueueCreate(4, sizeof(RelayAckEvent));
-    if (relayFrameQueue == nullptr || relayAckQueue == nullptr) {
+    relayLlhQueue = xQueueCreate(RELAY_LLH_QUEUE_LENGTH, sizeof(RelayLlhEnvelope));
+    if (relayFrameQueue == nullptr || relayAckQueue == nullptr || relayLlhQueue == nullptr) {
         Serial.println("[RELAY][ERROR] Khong tao duoc relay queue");
         if (relayFrameQueue != nullptr) {
             vQueueDelete(relayFrameQueue);
@@ -471,6 +478,10 @@ bool relaySetup() {
         if (relayAckQueue != nullptr) {
             vQueueDelete(relayAckQueue);
             relayAckQueue = nullptr;
+        }
+        if (relayLlhQueue != nullptr) {
+            vQueueDelete(relayLlhQueue);
+            relayLlhQueue = nullptr;
         }
         return false;
     }
@@ -606,6 +617,65 @@ bool relayProcessNextFrame(TickType_t waitTicks) {
     return sent;
 }
 
+bool relayProcessNextLlh(TickType_t waitTicks) {
+    if (!ROVER_RELAY_MODE || !relayReady || relayLlhQueue == nullptr) {
+        vTaskDelay(waitTicks);
+        return false;
+    }
+
+    RelayLlhEnvelope envelope{};
+    if (xQueueReceive(relayLlhQueue, &envelope, waitTicks) != pdTRUE) {
+        return false;
+    }
+    if (isChildPairingActive()) {
+        incrementStat(&RelayStats::childLlhForwardSkipped);
+        return false;
+    }
+
+    uint8_t baseMac[6] = {};
+    if (!espnowGetBaseMac(baseMac)) {
+        incrementStat(&RelayStats::childLlhForwardSkipped);
+        return false;
+    }
+
+    rtcm_espnow::RelayedRoverLlhStatusPacket forwarded{};
+    forwarded.common.magic = rtcm_espnow::MAGIC;
+    forwarded.common.version = rtcm_espnow::VERSION;
+    forwarded.common.packetType = rtcm_espnow::PACKET_TYPE_RELAYED_ROVER_LLH_STATUS;
+    forwarded.sequence = envelope.packet.sequence;
+    std::memcpy(forwarded.roverMac, envelope.childMac, sizeof(forwarded.roverMac));
+    forwarded.latitudeE7 = envelope.packet.latitudeE7;
+    forwarded.longitudeE7 = envelope.packet.longitudeE7;
+    forwarded.heightMm = envelope.packet.heightMm;
+    if (!rtcm_espnow::validateRelayedRoverLlhStatus(forwarded, sizeof(forwarded))) {
+        incrementStat(&RelayStats::childLlhForwardFailures);
+        return false;
+    }
+
+    const EspNowTxResult result = espnowTxTrySend(
+        baseMac,
+        reinterpret_cast<const uint8_t*>(&forwarded),
+        sizeof(forwarded));
+    if (result == EspNowTxResult::Busy) {
+        incrementStat(&RelayStats::childLlhForwardSkipped);
+        return false;
+    }
+    if (result != EspNowTxResult::Success) {
+        incrementStat(&RelayStats::childLlhForwardFailures);
+        Serial.printf("[RELAY][LLH][WARN] child=%s seq=%lu result=%s\n",
+                      macToString(envelope.childMac).c_str(),
+                      static_cast<unsigned long>(forwarded.sequence),
+                      espnowTxResultToString(result));
+        return false;
+    }
+
+    incrementStat(&RelayStats::childLlhForwarded);
+    Serial.printf("[RELAY][LLH] Forwarded child=%s seq=%lu\n",
+                  macToString(envelope.childMac).c_str(),
+                  static_cast<unsigned long>(forwarded.sequence));
+    return true;
+}
+
 bool relayHandleReceivedPacket(const uint8_t* sourceMac,
                                const uint8_t* data,
                                int length) {
@@ -628,6 +698,35 @@ bool relayHandleReceivedPacket(const uint8_t* sourceMac,
         }
         portEXIT_CRITICAL(&relayMux);
         return active;
+    }
+
+    if (common.packetType == rtcm_espnow::PACKET_TYPE_ROVER_LLH_STATUS &&
+        isChild(sourceMac)) {
+        if (length != static_cast<int>(sizeof(rtcm_espnow::RoverLlhStatusPacket))) {
+            incrementStat(&RelayStats::childLlhInvalid);
+            return true;
+        }
+        RelayLlhEnvelope envelope{};
+        std::memcpy(&envelope.packet, data, sizeof(envelope.packet));
+        if (!rtcm_espnow::validateRoverLlhStatus(envelope.packet,
+                                                 sizeof(envelope.packet))) {
+            incrementStat(&RelayStats::childLlhInvalid);
+            return true;
+        }
+        std::memcpy(envelope.childMac, sourceMac, sizeof(envelope.childMac));
+        if (relayLlhQueue == nullptr) {
+            incrementStat(&RelayStats::childLlhForwardFailures);
+            return true;
+        }
+        if (uxQueueMessagesWaiting(relayLlhQueue) > 0) {
+            incrementStat(&RelayStats::childLlhQueueOverwrites);
+        }
+        if (xQueueOverwrite(relayLlhQueue, &envelope) != pdPASS) {
+            incrementStat(&RelayStats::childLlhForwardFailures);
+            return true;
+        }
+        incrementStat(&RelayStats::childLlhReceived);
+        return true;
     }
 
     if (common.packetType != rtcm_espnow::PACKET_TYPE_FRAME_ACK || !isChild(sourceMac)) {

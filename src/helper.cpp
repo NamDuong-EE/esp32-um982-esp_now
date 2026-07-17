@@ -189,6 +189,12 @@ String formSerialDebugStatusString()
         payload += ",\"backoff_events\":" + String(downstream.backoffEvents);
         payload += ",\"frames_without_child\":" + String(downstream.framesWithoutChild);
         payload += ",\"frames_suppressed_pairing\":" + String(downstream.framesSuppressedDuringPairing);
+        payload += ",\"child_llh_received\":" + String(downstream.childLlhReceived);
+        payload += ",\"child_llh_invalid\":" + String(downstream.childLlhInvalid);
+        payload += ",\"child_llh_queue_overwrites\":" + String(downstream.childLlhQueueOverwrites);
+        payload += ",\"child_llh_forwarded\":" + String(downstream.childLlhForwarded);
+        payload += ",\"child_llh_forward_skipped\":" + String(downstream.childLlhForwardSkipped);
+        payload += ",\"child_llh_forward_failures\":" + String(downstream.childLlhForwardFailures);
         payload += ",\"last_ack_age_ms\":";
         payload += downstream.lastAckMillis == 0
                        ? "null"
@@ -292,6 +298,12 @@ String formDeviceHealthString()
         payload += ",\"relay_send_callback_timeouts\":" + String(relay.sendCallbackTimeouts);
         payload += ",\"relay_send_delivery_failures\":" + String(relay.sendDeliveryFailures);
         payload += ",\"relay_backoff_events\":" + String(relay.backoffEvents);
+        payload += ",\"relay_child_llh_received\":" + String(relay.childLlhReceived);
+        payload += ",\"relay_child_llh_invalid\":" + String(relay.childLlhInvalid);
+        payload += ",\"relay_child_llh_queue_overwrites\":" + String(relay.childLlhQueueOverwrites);
+        payload += ",\"relay_child_llh_forwarded\":" + String(relay.childLlhForwarded);
+        payload += ",\"relay_child_llh_forward_skipped\":" + String(relay.childLlhForwardSkipped);
+        payload += ",\"relay_child_llh_forward_failures\":" + String(relay.childLlhForwardFailures);
         payload += "}";
     }
     return payload;

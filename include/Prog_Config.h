@@ -17,6 +17,11 @@ inline constexpr int LED_PIN = 2;
 // ================= TASKS =================
 inline constexpr uint32_t MUTEX_TIMEOUT_MS = 1500;
 inline constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
+#ifndef SERIAL_DEBUG_STATUS_ENABLED
+#define SERIAL_DEBUG_STATUS_ENABLED 1
+#endif
+inline constexpr bool SERIAL_DEBUG_STATUS_OUTPUT_ENABLED =
+    SERIAL_DEBUG_STATUS_ENABLED != 0;
 inline constexpr uint32_t SERIAL_DEBUG_STATUS_INTERVAL_MS = 1000;
 inline constexpr uint32_t ROVER_LLH_STATUS_INTERVAL_MS = 1000;
 inline constexpr uint32_t ROVER_LLH_MAX_GGA_AGE_MS = 3000;
@@ -101,6 +106,7 @@ inline constexpr char ESPNOW_NVS_BASE_MAC_KEY[] = "base_mac";
 // button opens upstream pairing; after Base provisioning it opens child pairing.
 inline constexpr char ESPNOW_NVS_CHILD_MAC_KEY[] = "child_mac";
 inline constexpr std::size_t RELAY_QUEUE_LENGTH = 3;
+inline constexpr std::size_t RELAY_LLH_QUEUE_LENGTH = 1;
 inline constexpr uint32_t RELAY_ACK_TIMEOUT_MS = 300;
 inline constexpr uint8_t RELAY_FRAME_RETRY_COUNT = 2;
 inline constexpr uint8_t RELAY_FRAGMENT_SEND_RETRY_COUNT = 2;

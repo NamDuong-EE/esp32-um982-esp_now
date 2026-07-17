@@ -49,9 +49,11 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - Kiến trúc pairing động đã thống nhất với Base theo hướng broadcast discovery bằng nút vật lý, sau đó lưu MAC và chuyển sang unicast.
 - Trạng thái/health mặc định chỉ log ra Serial USB.
 
-### Telemetry Rover → Base (giai đoạn 1, đã triển khai)
+### Telemetry Rover → Base trực tiếp và qua Relay
 
-Mục tiêu của phiên bản đầu tiên là để một Rover thường gửi trạng thái GNSS ngược về Base đã pair. Relay và Rover con chưa tham gia luồng telemetry này; sau khi liên kết trực tiếp được kiểm thử ổn định mới bổ sung `Child Rover → Relay → Base`.
+Rover thường gửi trạng thái GNSS trực tiếp về peer đã pair. Nếu peer đó là Relay, Relay giữ nguyên sequence/LLH, thêm MAC Rover con và chuyển tiếp về Base.
+
+Relay đồng thời gửi LLH local của chính nó trực tiếp về Base bằng type `6`. Vì vậy Base/MQTT có hai snapshot độc lập: một theo MAC Relay (`via_relay=false`) và một theo MAC Rover con (`via_relay=true`).
 
 ```text
 UM980/982 Rover ── GGA ──> ESP32 Rover
@@ -59,20 +61,23 @@ UM980/982 Rover ── GGA ──> ESP32 Rover
                               │ ROVER_LLH_STATUS unicast · 1 Hz
                               ▼
 ESP32 Base ── latest state trong RAM
+
+Child Rover ── ROVER_LLH_STATUS · 20 byte ──> Relay
+Relay ── RELAYED_ROVER_LLH_STATUS · 28 byte ──> Base
 ```
 
 Nguyên tắc hiện tại:
 
-1. Packet runtime `ROVER_LLH_STATUS` (type `6`, 20 byte) độc lập với `RTCM_DATA` và `FRAME_ACK` hiện tại.
+1. Packet trực tiếp `ROVER_LLH_STATUS` (type `6`, 20 byte); packet chuyển tiếp `RELAYED_ROVER_LLH_STATUS` (type `7`, 28 byte) thêm MAC Rover con.
 2. Rover gửi tối đa 1 packet mỗi giây tới đúng `base_mac` đã pair. Telemetry có ưu tiên thấp hơn pairing và RTCM ACK; nếu TX manager đang bận thì có thể bỏ lần gửi hiện tại, không retry vì packet kế tiếp sẽ thay thế sau một giây.
 3. Packet dùng fixed-point `int32_t`: latitude/longitude nhân `10^7`, height đổi từ mét sang millimetre. Base chia lại theo cùng hệ số khi sử dụng. `height` hiện là altitude MSL ở trường 9 của GGA.
-4. Chỉ Rover Normal tạo task gửi LLH. Firmware Relay không gửi và chưa chuyển tiếp LLH của Rover con trong giai đoạn này.
+4. Rover con chỉ cần pair với Relay và vẫn chạy firmware Normal. Relay gửi LLH local của nó về Base, đồng thời chỉ nhận LLH downstream từ đúng `child_mac`; queue LLH con dài 1 nên trạng thái mới ghi đè trạng thái cũ khi RTCM đang bận.
 5. Callback ESP-NOW phía Base chỉ kiểm tra source MAC/length/magic/version rồi copy packet vào một slot RAM tương ứng Rover; không tạo JSON, gọi MQTT hoặc ghi flash trong callback Wi-Fi.
 6. Base giữ đúng một bản ghi mới nhất cho mỗi Rover trong RAM và packet mới ghi đè packet cũ. Trạng thái này không được ghi NVS/flash. Khi Base restart, RAM bị xóa nhưng Rover sẽ gửi lại trong tối đa một giây.
 7. NVS của Base tiếp tục chỉ lưu dữ liệu provisioning cần tồn tại qua restart như danh sách MAC Rover đã pair; không dùng NVS để lưu lịch sử LLH 1 Hz.
-8. Base xác định Rover trực tiếp bằng source MAC đã pair và log snapshot mới bằng `[BASE][ROVER_LLH]`. Việc đưa snapshot lên MQTT/server thuộc giai đoạn tiếp theo.
-9. Health Rover có `llh_status_sent`, `llh_status_skipped`, `llh_status_failures`; health Base có `llh_rx`, `llh_invalid`, `llh_unknown`.
-10. Cần kiểm thử packet loss, ACK/RTCM sequence gap và send callback trên phần cứng trước khi mở rộng telemetry qua Relay.
+8. Base xác định Rover trực tiếp bằng source MAC; với packet chuyển tiếp, Base xác thực source MAC Relay đã pair rồi dùng MAC Rover con trong packet làm danh tính nguồn.
+9. MQTT giữ topic theo MAC Rover con và thêm `via_relay`, `relay_mac` vào JSON. LLH vẫn chỉ giữ latest snapshot trong RAM, không ghi flash.
+10. Health Relay có các bộ đếm `child_llh_received`, `child_llh_forwarded`, `child_llh_forward_skipped`, `child_llh_forward_failures`; Base có `llh_relayed` và `llh_capacity_drop`.
 
 Với packet 20 byte ở 1 Hz, ngay cả năm Rover cũng chỉ tạo tải payload 800 bps trước overhead, nhỏ so với PHY LR 250 Kbps. Mục tiêu vẫn là bảo vệ RTCM: pairing và ACK luôn có ưu tiên cao hơn telemetry.
 
@@ -364,7 +369,9 @@ SoftAP luôn được khởi động sau khi Wi-Fi mode/channel, ESP-NOW LR rate
 - `satellites`
 - `last_gga_age_ms`
 
-Khi dùng ứng dụng Android tại `android-debug-viewer`, không cần bật SoftAP. Firmware phát dòng `[DEBUG_STATUS]` qua USB serial mỗi giây với cùng dữ liệu GNSS/RTCM của Web Debug; `[HEALTH]` chi tiết vẫn giữ chu kỳ 30 giây.
+Khi dùng ứng dụng Android tại `android-debug-viewer`, không cần bật SoftAP. Firmware mặc định phát dòng `[DEBUG_STATUS]` qua USB serial mỗi giây với cùng dữ liệu GNSS/RTCM của Web Debug; `[HEALTH]` chi tiết vẫn giữ chu kỳ 30 giây.
+
+Có thể tắt riêng `[DEBUG_STATUS]` bằng build flag `-DSERIAL_DEBUG_STATUS_ENABLED=0` mà không tắt `[HEALTH]`. Đặt lại `1` để bật. Khi khởi động firmware sẽ log `DEBUG_STATUS enabled=yes/no`.
 
 Normal web hiển thị health Rover hiện tại: ESP-NOW ready, Base pairing, RTCM frame, CRC, queue, sequence gap, ACK và free heap.
 

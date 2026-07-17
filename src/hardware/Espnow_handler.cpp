@@ -875,7 +875,7 @@ bool espnowTrySendRoverLlhStatus(double latitude,
                                  double longitude,
                                  double heightM) {
     static uint32_t statusSequence = 0;
-    if (!ready || !hasActiveBaseMac || ROVER_RELAY_MODE) {
+    if (!ready || !hasActiveBaseMac) {
         updateCounter(&EspNowRtcmStats::llhStatusSkipped);
         return false;
     }

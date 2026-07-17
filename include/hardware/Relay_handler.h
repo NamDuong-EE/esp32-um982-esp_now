@@ -26,6 +26,12 @@ struct RelayStats {
     uint32_t childPairResponsesReceived;
     uint32_t childPairConfirmsSent;
     uint32_t childPairAuthFailures;
+    uint32_t childLlhReceived;
+    uint32_t childLlhInvalid;
+    uint32_t childLlhQueueOverwrites;
+    uint32_t childLlhForwarded;
+    uint32_t childLlhForwardSkipped;
+    uint32_t childLlhForwardFailures;
     uint32_t lastAckMillis;
     bool hasStoredChildMac;
     bool childPairingActive;
@@ -40,6 +46,7 @@ bool relayQueueFrame(const uint8_t* frame,
                      uint16_t streamId,
                      uint32_t frameSequence);
 bool relayProcessNextFrame(TickType_t waitTicks);
+bool relayProcessNextLlh(TickType_t waitTicks);
 bool relayHandleReceivedPacket(const uint8_t* sourceMac,
                                const uint8_t* data,
                                int length);

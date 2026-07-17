@@ -60,7 +60,8 @@ void setup() {
     Serial.println("       ESP32U GNSS ROVER KHOI DONG       ");
     Serial.println("=========================================");
     Serial.printf("[MODE] %s\n", ROVER_RELAY_MODE ? "relay" : "normal");
-    Serial.printf("[SERIAL_DEBUG] DEBUG_STATUS interval=%lu ms\n",
+    Serial.printf("[SERIAL_DEBUG] DEBUG_STATUS enabled=%s interval=%lu ms\n",
+                  SERIAL_DEBUG_STATUS_OUTPUT_ENABLED ? "yes" : "no",
                   static_cast<unsigned long>(SERIAL_DEBUG_STATUS_INTERVAL_MS));
 
     if (Serial1.setTxBufferSize(GNSS_TX_BUFFER_SIZE) != GNSS_TX_BUFFER_SIZE) {
@@ -116,9 +117,7 @@ void setup() {
     createRequiredTask(gnssParseTask, "GNSS Parse", 4096, 3, 0);
     createRequiredTask(gnssPublishTask, "GNSS Publish", 4096, 2, 0);
     createRequiredTask(healthCheckTask, "Health", 4096, 1, 1);
-    if constexpr (!ROVER_RELAY_MODE) {
-        createRequiredTask(roverLlhStatusTask, "LLH Status", 3072, 1, 1);
-    }
+    createRequiredTask(roverLlhStatusTask, "LLH Status", 3072, 1, 1);
     if constexpr (ROVER_RELAY_MODE) {
         createRequiredTask(relaySendTask, "RTCM Relay", 4096, 3, 1);
     }
@@ -210,8 +209,10 @@ void healthCheckTask(void* parameter) {
                 }
             }
         }
-        Serial.print("[DEBUG_STATUS] ");
-        Serial.println(formSerialDebugStatusString());
+        if constexpr (SERIAL_DEBUG_STATUS_OUTPUT_ENABLED) {
+            Serial.print("[DEBUG_STATUS] ");
+            Serial.println(formSerialDebugStatusString());
+        }
         vTaskDelay(pdMS_TO_TICKS(SERIAL_DEBUG_STATUS_INTERVAL_MS));
     }
 }
@@ -245,7 +246,8 @@ void relaySendTask(void* parameter) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
-        relayProcessNextFrame(pdMS_TO_TICKS(100));
+        relayProcessNextFrame(pdMS_TO_TICKS(20));
+        relayProcessNextLlh(pdMS_TO_TICKS(20));
     }
 }
 

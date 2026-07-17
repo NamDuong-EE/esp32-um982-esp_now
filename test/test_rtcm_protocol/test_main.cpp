@@ -72,6 +72,24 @@ void test_rover_llh_status_validation() {
     TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
 }
 
+void test_relayed_rover_llh_status_validation() {
+    RelayedRoverLlhStatusPacket status{};
+    status.common.magic = MAGIC;
+    status.common.version = VERSION;
+    status.common.packetType = PACKET_TYPE_RELAYED_ROVER_LLH_STATUS;
+    status.sequence = 9;
+    const uint8_t roverMac[6] = {0x58, 0x2A, 0xBD, 0x71, 0xE4, 0xF0};
+    std::memcpy(status.roverMac, roverMac, sizeof(roverMac));
+    status.latitudeE7 = 210734567;
+    status.longitudeE7 = 1058123456;
+    status.heightMm = 12345;
+
+    TEST_ASSERT_EQUAL_UINT32(28, sizeof(RelayedRoverLlhStatusPacket));
+    TEST_ASSERT_TRUE(validateRelayedRoverLlhStatus(status, sizeof(status)));
+    std::memset(status.roverMac, 0, sizeof(status.roverMac));
+    TEST_ASSERT_FALSE(validateRelayedRoverLlhStatus(status, sizeof(status)));
+}
+
 void test_pairing_packet_validation() {
     const std::array<uint8_t, 16> key{{0x10, 0x21, 0x32, 0x43,
                                       0x54, 0x65, 0x76, 0x87,
@@ -144,6 +162,7 @@ void runTests() {
     RUN_TEST(test_packet_header_validation);
     RUN_TEST(test_frame_ack_validation);
     RUN_TEST(test_rover_llh_status_validation);
+    RUN_TEST(test_relayed_rover_llh_status_validation);
     RUN_TEST(test_pairing_packet_validation);
     RUN_TEST(test_rtcm_crc_validation);
     UNITY_END();

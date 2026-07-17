@@ -14,6 +14,7 @@ inline constexpr uint8_t PACKET_TYPE_PAIR_DISCOVERY = 3;
 inline constexpr uint8_t PACKET_TYPE_PAIR_RESPONSE = 4;
 inline constexpr uint8_t PACKET_TYPE_PAIR_CONFIRM = 5;
 inline constexpr uint8_t PACKET_TYPE_ROVER_LLH_STATUS = 6;
+inline constexpr uint8_t PACKET_TYPE_RELAYED_ROVER_LLH_STATUS = 7;
 inline constexpr uint8_t ROLE_BASE = 1;
 inline constexpr uint8_t ROLE_ROVER = 2;
 inline constexpr uint8_t ACK_STATUS_WRITTEN = 1;
@@ -64,6 +65,16 @@ struct RoverLlhStatusPacket {
     int32_t heightMm;
 };
 
+struct RelayedRoverLlhStatusPacket {
+    EspNowCommonHeader common;
+    uint32_t sequence;
+    uint8_t roverMac[6];
+    uint8_t reserved[2];
+    int32_t latitudeE7;
+    int32_t longitudeE7;
+    int32_t heightMm;
+};
+
 struct PairDiscoveryPacket {
     EspNowCommonHeader common;
     uint8_t role;
@@ -101,6 +112,8 @@ static_assert(sizeof(EspNowCommonHeader) == 4, "ESP-NOW common header must be 4 
 static_assert(sizeof(RtcmEspNowHeader) == 16, "RTCM ESP-NOW header must be 16 bytes");
 static_assert(sizeof(RtcmEspNowAck) == 12, "RTCM ESP-NOW ACK must be 12 bytes");
 static_assert(sizeof(RoverLlhStatusPacket) == 20, "ROVER_LLH_STATUS must be 20 bytes");
+static_assert(sizeof(RelayedRoverLlhStatusPacket) == 28,
+              "RELAYED_ROVER_LLH_STATUS must be 28 bytes");
 static_assert(sizeof(PairDiscoveryPacket) == 28, "PAIR_DISCOVERY must be 28 bytes");
 static_assert(sizeof(PairResponsePacket) == 28, "PAIR_RESPONSE must be 28 bytes");
 static_assert(sizeof(PairConfirmPacket) == 24, "PAIR_CONFIRM must be 24 bytes");
@@ -113,6 +126,8 @@ bool validatePacketHeader(const RtcmEspNowHeader& header, std::size_t receivedLe
 bool validateFrameAck(const RtcmEspNowAck& ack, std::size_t receivedLength);
 bool validateRoverLlhStatus(const RoverLlhStatusPacket& packet,
                             std::size_t receivedLength);
+bool validateRelayedRoverLlhStatus(const RelayedRoverLlhStatusPacket& packet,
+                                   std::size_t receivedLength);
 
 uint32_t computePairingAuthTag(const uint8_t* data,
                                std::size_t lengthWithoutAuthTag,
