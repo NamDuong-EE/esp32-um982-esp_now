@@ -25,6 +25,7 @@
     button, input { border:1px solid var(--line); border-radius:9px; background:var(--panel2); color:var(--text); font:inherit; }
     button { padding:9px 11px; font-weight:700; }
     button.primary { color:#fff; background:#087f5b; border-color:#087f5b; }
+    button.danger { color:#fff; background:var(--bad); border-color:var(--bad); }
     .connection { display:flex; align-items:center; gap:8px; margin-top:9px; color:var(--muted); font-size:12px; }
     .dot { width:9px; height:9px; border-radius:50%; background:var(--bad); }
     .dot.on { background:var(--ok); box-shadow:0 0 8px rgba(8,127,91,.45); }
@@ -70,7 +71,7 @@
 <header>
   <div class="top">
     <div><div class="eyebrow">USB OTG · GNSS/RTCM</div><h1>Rover Debug</h1></div>
-    <div class="actions"><button class="primary" onclick="connectUsb()">Connect</button><button onclick="disconnectUsb()">Disconnect</button></div>
+    <div class="actions"><button id="usbAction" class="primary" onclick="toggleUsbConnection()">Connect</button></div>
   </div>
   <div class="connection"><span id="usbDot" class="dot"></span><span id="usbStatus">Initializing…</span><span id="mode" class="mode">--</span></div>
 </header>
@@ -141,11 +142,21 @@
     ['frames_suppressed_pairing','Frames suppressed during pairing'], ['last_ack_age_ms','Last ACK age','age']
   ];
 
-  function connectUsb(){ if(window.Android) Android.connect(); }
-  function disconnectUsb(){ if(window.Android) Android.disconnect(); }
+  let usbConnected = false;
+  function toggleUsbConnection(){
+    if(!window.Android) return;
+    if(usbConnected) Android.disconnect();
+    else Android.connect();
+  }
   window.onUsbStatus = (message, connected) => {
+    usbConnected = !!connected;
     $('usbStatus').textContent = message;
-    $('usbDot').classList.toggle('on', !!connected);
+    $('usbDot').classList.toggle('on', usbConnected);
+    const action = $('usbAction');
+    action.textContent = usbConnected ? 'Disconnect' : 'Connect';
+    action.classList.toggle('primary', !usbConnected);
+    action.classList.toggle('danger', usbConnected);
+    action.setAttribute('aria-pressed', String(usbConnected));
   };
 
   function cellClass(kind, value) {
