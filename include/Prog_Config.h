@@ -105,14 +105,19 @@ inline constexpr char ESPNOW_NVS_BASE_MAC_KEY[] = "base_mac";
 // Relay mode uses the same physical pairing button. If no Base is stored the
 // button opens upstream pairing; after Base provisioning it opens child pairing.
 inline constexpr char ESPNOW_NVS_CHILD_MAC_KEY[] = "child_mac";
+inline constexpr char ESPNOW_NVS_CHILD_COUNT_KEY[] = "child_count";
+inline constexpr char ESPNOW_NVS_CHILD_MAC_PREFIX[] = "child";
+inline constexpr std::size_t RELAY_MAX_CHILDREN = 5;
 inline constexpr std::size_t RELAY_QUEUE_LENGTH = 3;
-inline constexpr std::size_t RELAY_LLH_QUEUE_LENGTH = 1;
 inline constexpr uint32_t RELAY_ACK_TIMEOUT_MS = 300;
 inline constexpr uint8_t RELAY_FRAME_RETRY_COUNT = 2;
 inline constexpr uint8_t RELAY_FRAGMENT_SEND_RETRY_COUNT = 2;
 inline constexpr uint32_t RELAY_FRAGMENT_GAP_MS = 5;
 inline constexpr uint32_t RELAY_FAILED_FRAME_BACKOFF_MS = 1000;
 inline constexpr uint32_t RELAY_DISCOVERY_INTERVAL_MS = 500;
+inline constexpr uint32_t RELAY_CHILD_CLEAR_HOLD_MS = 20000;
+inline constexpr uint8_t RELAY_CHILD_FAILURES_BEFORE_COOLDOWN = 2;
+inline constexpr uint32_t RELAY_CHILD_FAILURE_COOLDOWN_MS = 3000;
 
 // Enable only after replacing both keys on Base and Rover with the same provisioned values.
 inline constexpr bool ESPNOW_ENCRYPTION_ENABLED = false;

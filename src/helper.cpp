@@ -128,7 +128,7 @@ String formSerialDebugStatusString()
     }
 
     String payload;
-    payload.reserve(1800);
+    payload.reserve(3200);
     payload = "{\"mode\":\"";
     payload += ROVER_RELAY_MODE ? "relay" : "normal";
     payload += "\",\"device\":{";
@@ -162,6 +162,8 @@ String formSerialDebugStatusString()
 
     if constexpr (ROVER_RELAY_MODE) {
         const RelayStats downstream = relayGetStats();
+        RelayChildStatus children[RELAY_MAX_CHILDREN] = {};
+        const size_t childCount = relayCopyChildren(children, RELAY_MAX_CHILDREN);
         uint8_t childMac[6] = {};
         const bool hasChild = relayGetChildMac(childMac);
         char childMacText[18] = {};
@@ -189,12 +191,49 @@ String formSerialDebugStatusString()
         payload += ",\"backoff_events\":" + String(downstream.backoffEvents);
         payload += ",\"frames_without_child\":" + String(downstream.framesWithoutChild);
         payload += ",\"frames_suppressed_pairing\":" + String(downstream.framesSuppressedDuringPairing);
+        payload += ",\"child_count\":" + String(childCount);
+        payload += ",\"child_clear_events\":" + String(downstream.childClearEvents);
+        payload += ",\"frames_skipped_cooldown\":" + String(downstream.framesSkippedCooldown);
         payload += ",\"child_llh_received\":" + String(downstream.childLlhReceived);
         payload += ",\"child_llh_invalid\":" + String(downstream.childLlhInvalid);
         payload += ",\"child_llh_queue_overwrites\":" + String(downstream.childLlhQueueOverwrites);
         payload += ",\"child_llh_forwarded\":" + String(downstream.childLlhForwarded);
         payload += ",\"child_llh_forward_skipped\":" + String(downstream.childLlhForwardSkipped);
         payload += ",\"child_llh_forward_failures\":" + String(downstream.childLlhForwardFailures);
+        payload += ",\"children\":[";
+        for (size_t index = 0; index < childCount; ++index) {
+            if (index > 0) {
+                payload += ',';
+            }
+            char mac[18] = {};
+            snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
+                     children[index].mac[0], children[index].mac[1],
+                     children[index].mac[2], children[index].mac[3],
+                     children[index].mac[4], children[index].mac[5]);
+            payload += "{\"mac\":\"" + String(mac) + "\"";
+            payload += ",\"frames_sent\":" + String(children[index].framesSent);
+            payload += ",\"frames_acked\":" + String(children[index].framesAcked);
+            payload += ",\"frame_retries\":" + String(children[index].frameRetries);
+            payload += ",\"ack_timeouts\":" + String(children[index].ackTimeouts);
+            payload += ",\"send_failures\":" + String(children[index].sendFailures);
+            payload += ",\"frames_skipped_cooldown\":" + String(children[index].framesSkippedCooldown);
+            payload += ",\"consecutive_failures\":" + String(children[index].consecutiveFailures);
+            payload += ",\"cooldown_remaining_ms\":";
+            payload += children[index].cooldownUntilMs != 0 &&
+                               static_cast<int32_t>(children[index].cooldownUntilMs - now) > 0
+                           ? String(children[index].cooldownUntilMs - now)
+                           : "0";
+            payload += ",\"llh_received\":" + String(children[index].llhReceived);
+            payload += ",\"llh_forwarded\":" + String(children[index].llhForwarded);
+            payload += ",\"llh_forward_skipped\":" + String(children[index].llhForwardSkipped);
+            payload += ",\"llh_forward_failures\":" + String(children[index].llhForwardFailures);
+            payload += ",\"last_ack_age_ms\":";
+            payload += children[index].lastAckMillis == 0
+                           ? "null"
+                           : String(now - children[index].lastAckMillis);
+            payload += '}';
+        }
+        payload += ']';
         payload += ",\"last_ack_age_ms\":";
         payload += downstream.lastAckMillis == 0
                        ? "null"
@@ -298,6 +337,9 @@ String formDeviceHealthString()
         payload += ",\"relay_send_callback_timeouts\":" + String(relay.sendCallbackTimeouts);
         payload += ",\"relay_send_delivery_failures\":" + String(relay.sendDeliveryFailures);
         payload += ",\"relay_backoff_events\":" + String(relay.backoffEvents);
+        payload += ",\"relay_child_count\":" + String(relay.childCount);
+        payload += ",\"relay_child_clear_events\":" + String(relay.childClearEvents);
+        payload += ",\"relay_frames_skipped_cooldown\":" + String(relay.framesSkippedCooldown);
         payload += ",\"relay_child_llh_received\":" + String(relay.childLlhReceived);
         payload += ",\"relay_child_llh_invalid\":" + String(relay.childLlhInvalid);
         payload += ",\"relay_child_llh_queue_overwrites\":" + String(relay.childLlhQueueOverwrites);

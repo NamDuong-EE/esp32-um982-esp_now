@@ -5,6 +5,24 @@
 #include <cstddef>
 #include <cstdint>
 
+struct RelayChildStatus {
+    uint8_t mac[6] = {};
+    uint32_t framesSent = 0;
+    uint32_t framesAcked = 0;
+    uint32_t frameRetries = 0;
+    uint32_t ackTimeouts = 0;
+    uint32_t sendFailures = 0;
+    uint32_t framesSkippedCooldown = 0;
+    uint32_t llhReceived = 0;
+    uint32_t llhForwarded = 0;
+    uint32_t llhForwardSkipped = 0;
+    uint32_t llhForwardFailures = 0;
+    uint32_t lastAckMillis = 0;
+    uint32_t cooldownUntilMs = 0;
+    uint8_t consecutiveFailures = 0;
+    bool stored = false;
+};
+
 struct RelayStats {
     uint32_t framesQueued;
     uint32_t framesSent;
@@ -32,6 +50,9 @@ struct RelayStats {
     uint32_t childLlhForwarded;
     uint32_t childLlhForwardSkipped;
     uint32_t childLlhForwardFailures;
+    uint32_t childCount;
+    uint32_t childClearEvents;
+    uint32_t framesSkippedCooldown;
     uint32_t lastAckMillis;
     bool hasStoredChildMac;
     bool childPairingActive;
@@ -52,5 +73,6 @@ bool relayHandleReceivedPacket(const uint8_t* sourceMac,
                                int length);
 RelayStats relayGetStats();
 bool relayGetChildMac(uint8_t mac[6]);
+size_t relayCopyChildren(RelayChildStatus* destination, size_t capacity);
 
 #endif

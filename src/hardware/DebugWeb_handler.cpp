@@ -120,13 +120,15 @@ void handleRelayStatus() {
     const GgaDebugSnapshot gga = getGgaDebugSnapshot();
     const EspNowRtcmStats upstream = espnowGetStats();
     const RelayStats downstream = relayGetStats();
+    RelayChildStatus children[RELAY_MAX_CHILDREN] = {};
+    const size_t childCount = relayCopyChildren(children, RELAY_MAX_CHILDREN);
     const uint32_t now = millis();
     uint8_t baseMac[6] = {};
     uint8_t childMac[6] = {};
     const bool hasBase = espnowGetBaseMac(baseMac);
     const bool hasChild = relayGetChildMac(childMac);
     String payload;
-    payload.reserve(1800);
+    payload.reserve(3200);
     payload = "{\"mode\":\"relay\",\"device\":{";
     payload += "\"gga_valid\":" + String(gga.valid ? "true" : "false");
     payload += ",\"lat\":" + String(gga.lat, 7);
@@ -163,6 +165,36 @@ void handleRelayStatus() {
     payload += ",\"backoff_events\":" + String(downstream.backoffEvents);
     payload += ",\"frames_without_child\":" + String(downstream.framesWithoutChild);
     payload += ",\"frames_suppressed_pairing\":" + String(downstream.framesSuppressedDuringPairing);
+    payload += ",\"child_count\":" + String(childCount);
+    payload += ",\"child_clear_events\":" + String(downstream.childClearEvents);
+    payload += ",\"frames_skipped_cooldown\":" + String(downstream.framesSkippedCooldown);
+    payload += ",\"children\":[";
+    for (size_t index = 0; index < childCount; ++index) {
+        if (index > 0) {
+            payload += ',';
+        }
+        payload += "{\"mac\":\"" + macText(children[index].mac, true) + "\"";
+        payload += ",\"frames_sent\":" + String(children[index].framesSent);
+        payload += ",\"frames_acked\":" + String(children[index].framesAcked);
+        payload += ",\"frame_retries\":" + String(children[index].frameRetries);
+        payload += ",\"ack_timeouts\":" + String(children[index].ackTimeouts);
+        payload += ",\"send_failures\":" + String(children[index].sendFailures);
+        payload += ",\"frames_skipped_cooldown\":" + String(children[index].framesSkippedCooldown);
+        payload += ",\"consecutive_failures\":" + String(children[index].consecutiveFailures);
+        payload += ",\"cooldown_remaining_ms\":";
+        payload += children[index].cooldownUntilMs != 0 &&
+                           static_cast<int32_t>(children[index].cooldownUntilMs - now) > 0
+                       ? String(children[index].cooldownUntilMs - now)
+                       : "0";
+        payload += ",\"llh_received\":" + String(children[index].llhReceived);
+        payload += ",\"llh_forwarded\":" + String(children[index].llhForwarded);
+        payload += ",\"last_ack_age_ms\":";
+        payload += children[index].lastAckMillis == 0
+                       ? "null"
+                       : String(now - children[index].lastAckMillis);
+        payload += '}';
+    }
+    payload += ']';
     payload += ",\"last_ack_age_ms\":";
     payload += downstream.lastAckMillis == 0 ? "null" : String(now - downstream.lastAckMillis);
     payload += "}}";

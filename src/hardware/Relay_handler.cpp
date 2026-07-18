@@ -25,23 +25,25 @@ struct RelayFrame {
 };
 
 struct RelayAckEvent {
+    uint8_t sourceMac[6];
     uint16_t streamId;
     uint32_t frameSequence;
 };
 
-struct RelayLlhEnvelope {
-    uint8_t childMac[6];
+struct RelayChildLlhSlot {
     rtcm_espnow::RoverLlhStatusPacket packet;
+    bool pending;
 };
 
 constexpr uint8_t BROADCAST_MAC[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 QueueHandle_t relayFrameQueue = nullptr;
 QueueHandle_t relayAckQueue = nullptr;
-QueueHandle_t relayLlhQueue = nullptr;
 bool relayReady = false;
-uint8_t childMac[6] = {};
-bool hasChildMac = false;
+RelayChildStatus childPeers[RELAY_MAX_CHILDREN] = {};
+RelayChildLlhSlot childLlhSlots[RELAY_MAX_CHILDREN] = {};
+size_t childCount = 0;
+size_t llhRoundRobinIndex = 0;
 RelayStats stats{};
 portMUX_TYPE statsMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE relayMux = portMUX_INITIALIZER_UNLOCKED;
@@ -58,6 +60,7 @@ rtcm_espnow::PairResponsePacket pendingPairResponsePacket{};
 bool waitingForAck = false;
 uint16_t expectedAckStreamId = 0;
 uint32_t expectedAckSequence = 0;
+uint8_t expectedAckMac[6] = {};
 
 void incrementStat(uint32_t RelayStats::*member, uint32_t amount = 1) {
     portENTER_CRITICAL(&statsMux);
@@ -71,9 +74,13 @@ void setChildPairingStat(bool active) {
     portEXIT_CRITICAL(&statsMux);
 }
 
-void setStoredChildStat(bool stored) {
+void updateChildCountStats() {
+    portENTER_CRITICAL(&relayMux);
+    const size_t count = childCount;
+    portEXIT_CRITICAL(&relayMux);
     portENTER_CRITICAL(&statsMux);
-    stats.hasStoredChildMac = stored;
+    stats.childCount = static_cast<uint32_t>(count);
+    stats.hasStoredChildMac = count > 0;
     portEXIT_CRITICAL(&statsMux);
 }
 
@@ -103,8 +110,36 @@ bool macIsConfigured(const uint8_t* mac) {
             mac[3] != 0 || mac[4] != 0 || mac[5] != 0);
 }
 
-bool isChild(const uint8_t* mac) {
-    return hasChildMac && mac != nullptr && std::memcmp(mac, childMac, 6) == 0;
+size_t findChildIndexLocked(const uint8_t* mac) {
+    if (mac == nullptr) {
+        return RELAY_MAX_CHILDREN;
+    }
+    for (size_t index = 0; index < childCount; ++index) {
+        if (std::memcmp(childPeers[index].mac, mac, 6) == 0) {
+            return index;
+        }
+    }
+    return RELAY_MAX_CHILDREN;
+}
+
+size_t findChildIndex(const uint8_t* mac) {
+    portENTER_CRITICAL(&relayMux);
+    const size_t index = findChildIndexLocked(mac);
+    portEXIT_CRITICAL(&relayMux);
+    return index;
+}
+
+size_t copyChildren(RelayChildStatus* destination, size_t capacity) {
+    if (destination == nullptr || capacity == 0) {
+        return 0;
+    }
+    portENTER_CRITICAL(&relayMux);
+    const size_t count = childCount < capacity ? childCount : capacity;
+    for (size_t index = 0; index < count; ++index) {
+        destination[index] = childPeers[index];
+    }
+    portEXIT_CRITICAL(&relayMux);
+    return count;
 }
 
 uint32_t localDeviceId() {
@@ -164,26 +199,97 @@ bool sendPacketSync(const uint8_t* destinationMac,
     return false;
 }
 
-bool loadStoredChildMac(uint8_t mac[6]) {
-    Preferences preferences;
-    if (!preferences.begin(ESPNOW_NVS_NAMESPACE, true)) {
-        return false;
-    }
-    const bool ok = preferences.getBytesLength(ESPNOW_NVS_CHILD_MAC_KEY) == 6 &&
-                    preferences.getBytes(ESPNOW_NVS_CHILD_MAC_KEY, mac, 6) == 6 &&
-                    macIsConfigured(mac);
-    preferences.end();
-    return ok;
+void childNvsKey(size_t index, char key[16]) {
+    snprintf(key, 16, "%s%u", ESPNOW_NVS_CHILD_MAC_PREFIX,
+             static_cast<unsigned>(index));
 }
 
-bool saveStoredChildMac(const uint8_t mac[6]) {
+bool saveStoredChildren() {
+    RelayChildStatus snapshot[RELAY_MAX_CHILDREN] = {};
+    const size_t count = copyChildren(snapshot, RELAY_MAX_CHILDREN);
     Preferences preferences;
     if (!preferences.begin(ESPNOW_NVS_NAMESPACE, false)) {
         return false;
     }
-    const bool ok = preferences.putBytes(ESPNOW_NVS_CHILD_MAC_KEY, mac, 6) == 6;
+    bool ok = preferences.putUChar(ESPNOW_NVS_CHILD_COUNT_KEY,
+                                   static_cast<uint8_t>(count)) == 1;
+    for (size_t index = 0; index < RELAY_MAX_CHILDREN; ++index) {
+        char key[16] = {};
+        childNvsKey(index, key);
+        if (index < count) {
+            ok = preferences.putBytes(key, snapshot[index].mac, 6) == 6 && ok;
+        } else {
+            preferences.remove(key);
+        }
+    }
+    preferences.remove(ESPNOW_NVS_CHILD_MAC_KEY);
     preferences.end();
     return ok;
+}
+
+bool loadStoredChildren() {
+    Preferences preferences;
+    if (!preferences.begin(ESPNOW_NVS_NAMESPACE, true)) {
+        return false;
+    }
+    const uint8_t storedCount = preferences.getUChar(ESPNOW_NVS_CHILD_COUNT_KEY, 0);
+    bool migratedLegacy = false;
+    childCount = 0;
+    for (size_t index = 0;
+         index < storedCount && index < RELAY_MAX_CHILDREN;
+         ++index) {
+        char key[16] = {};
+        childNvsKey(index, key);
+        uint8_t mac[6] = {};
+        if (preferences.getBytesLength(key) != 6 ||
+            preferences.getBytes(key, mac, 6) != 6 ||
+            !macIsConfigured(mac)) {
+            continue;
+        }
+        bool duplicate = false;
+        for (size_t existing = 0; existing < childCount; ++existing) {
+            duplicate = duplicate || std::memcmp(childPeers[existing].mac, mac, 6) == 0;
+        }
+        if (!duplicate) {
+            std::memcpy(childPeers[childCount].mac, mac, 6);
+            childPeers[childCount].stored = true;
+            ++childCount;
+        }
+    }
+    if (childCount == 0) {
+        uint8_t legacyMac[6] = {};
+        if (preferences.getBytesLength(ESPNOW_NVS_CHILD_MAC_KEY) == 6 &&
+            preferences.getBytes(ESPNOW_NVS_CHILD_MAC_KEY, legacyMac, 6) == 6 &&
+            macIsConfigured(legacyMac)) {
+            std::memcpy(childPeers[0].mac, legacyMac, 6);
+            childPeers[0].stored = true;
+            childCount = 1;
+            migratedLegacy = true;
+        }
+    }
+    preferences.end();
+    updateChildCountStats();
+    if (migratedLegacy) {
+        Serial.println("[RELAY] Migrating legacy child_mac NVS entry");
+        return saveStoredChildren();
+    }
+    return childCount > 0;
+}
+
+bool clearStoredChildrenNvs() {
+    Preferences preferences;
+    if (!preferences.begin(ESPNOW_NVS_NAMESPACE, false)) {
+        return false;
+    }
+    preferences.remove(ESPNOW_NVS_CHILD_COUNT_KEY);
+    preferences.remove(ESPNOW_NVS_CHILD_MAC_KEY);
+    for (size_t index = 0; index < RELAY_MAX_CHILDREN; ++index) {
+        char key[16] = {};
+        childNvsKey(index, key);
+        preferences.remove(key);
+    }
+    preferences.end();
+    return true;
 }
 
 void updateQueueHighWater() {
@@ -318,6 +424,18 @@ void processPairResponse() {
     }
     Serial.println("[RELAY][PAIR][DIAG] PAIR_RESPONSE validation=ok");
     incrementStat(&RelayStats::childPairResponsesReceived);
+    const size_t existingIndex = findChildIndex(sourceMac);
+    if (existingIndex >= RELAY_MAX_CHILDREN) {
+        portENTER_CRITICAL(&relayMux);
+        const bool full = childCount >= RELAY_MAX_CHILDREN;
+        portEXIT_CRITICAL(&relayMux);
+        if (full) {
+            Serial.printf("[RELAY][PAIR][REJECT] Child list full (%u)\n",
+                          static_cast<unsigned>(RELAY_MAX_CHILDREN));
+            stopChildPairing("child list full");
+            return;
+        }
+    }
     if (!addPeer(sourceMac, false)) {
         Serial.println("[RELAY][PAIR][DIAG][REJECT] Temporary Child peer add=failed");
         return;
@@ -344,19 +462,42 @@ void processPairResponse() {
         return;
     }
     incrementStat(&RelayStats::childPairConfirmsSent);
-    if (!saveStoredChildMac(sourceMac)) {
-        Serial.println("[RELAY][PAIR][ERROR] Khong luu duoc MAC child vao NVS");
+    size_t selectedIndex = existingIndex;
+    bool added = false;
+    if (selectedIndex >= RELAY_MAX_CHILDREN) {
+        portENTER_CRITICAL(&relayMux);
+        if (childCount < RELAY_MAX_CHILDREN) {
+            selectedIndex = childCount++;
+            std::memcpy(childPeers[selectedIndex].mac, sourceMac, 6);
+            childPeers[selectedIndex].stored = true;
+            childLlhSlots[selectedIndex] = {};
+            added = true;
+        }
+        portEXIT_CRITICAL(&relayMux);
+    }
+    if (selectedIndex >= RELAY_MAX_CHILDREN) {
+        Serial.println("[RELAY][PAIR][ERROR] Khong con slot child sau PAIR_CONFIRM");
+        stopChildPairing("no child slot");
         return;
     }
-    std::memcpy(childMac, sourceMac, 6);
-    hasChildMac = true;
-    setStoredChildStat(true);
-    stopChildPairing("paired");
-    if (!addPeer(childMac, ESPNOW_ENCRYPTION_ENABLED)) {
+    updateChildCountStats();
+    if (added && !saveStoredChildren()) {
+        portENTER_CRITICAL(&relayMux);
+        if (selectedIndex < childCount) {
+            childPeers[selectedIndex].stored = false;
+        }
+        portEXIT_CRITICAL(&relayMux);
+        Serial.println("[RELAY][PAIR][ERROR] Khong luu duoc danh sach child vao NVS");
+    }
+    stopChildPairing(added ? "paired new child" : "reconfirmed child");
+    if (!addPeer(sourceMac, ESPNOW_ENCRYPTION_ENABLED)) {
         Serial.println("[RELAY][PAIR][ERROR] Child da luu nhung runtime peer chua san sang");
         return;
     }
-    Serial.println("[RELAY][PAIR] Paired child " + macToString(childMac));
+    Serial.printf("[RELAY][PAIR] Child %s index=%u count=%u\n",
+                  macToString(sourceMac).c_str(),
+                  static_cast<unsigned>(selectedIndex),
+                  static_cast<unsigned>(childCount));
 }
 
 bool sendFragment(const uint8_t* child,
@@ -376,7 +517,44 @@ bool sendFragment(const uint8_t* child,
     return false;
 }
 
-bool sendFrame(const RelayFrame& relayFrame) {
+bool childIsCoolingDown(size_t childIndex, uint32_t now) {
+    bool coolingDown = false;
+    portENTER_CRITICAL(&relayMux);
+    if (childIndex < childCount && childPeers[childIndex].cooldownUntilMs != 0 &&
+        static_cast<int32_t>(now - childPeers[childIndex].cooldownUntilMs) < 0) {
+        coolingDown = true;
+        ++childPeers[childIndex].framesSkippedCooldown;
+    }
+    portEXIT_CRITICAL(&relayMux);
+    if (coolingDown) {
+        incrementStat(&RelayStats::framesSkippedCooldown);
+    }
+    return coolingDown;
+}
+
+void recordChildFrameOutcome(size_t childIndex, bool success) {
+    portENTER_CRITICAL(&relayMux);
+    if (childIndex < childCount) {
+        RelayChildStatus& child = childPeers[childIndex];
+        if (success) {
+            child.consecutiveFailures = 0;
+            child.cooldownUntilMs = 0;
+        } else {
+            ++child.sendFailures;
+            if (child.consecutiveFailures < UINT8_MAX) {
+                ++child.consecutiveFailures;
+            }
+            if (child.consecutiveFailures >= RELAY_CHILD_FAILURES_BEFORE_COOLDOWN) {
+                child.cooldownUntilMs = millis() + RELAY_CHILD_FAILURE_COOLDOWN_MS;
+            }
+        }
+    }
+    portEXIT_CRITICAL(&relayMux);
+}
+
+bool sendFrameToChild(const RelayFrame& relayFrame,
+                      const uint8_t* destinationMac,
+                      size_t childIndex) {
     uint8_t packet[rtcm_espnow::ESPNOW_V1_MAX_PACKET_SIZE] = {};
     const uint8_t fragmentCount = rtcm_espnow::expectedFragmentCount(relayFrame.frameLength);
 
@@ -392,6 +570,7 @@ bool sendFrame(const RelayFrame& relayFrame) {
         waitingForAck = true;
         expectedAckStreamId = relayFrame.streamId;
         expectedAckSequence = relayFrame.frameSequence;
+        std::memcpy(expectedAckMac, destinationMac, sizeof(expectedAckMac));
         portEXIT_CRITICAL(&relayMux);
 
         bool allFragmentsSent = true;
@@ -416,7 +595,7 @@ bool sendFrame(const RelayFrame& relayFrame) {
             header.payloadLength = payloadLength;
             std::memcpy(packet, &header, sizeof(header));
             std::memcpy(packet + sizeof(header), relayFrame.frame + offset, payloadLength);
-            if (!sendFragment(childMac, packet, sizeof(header) + payloadLength)) {
+            if (!sendFragment(destinationMac, packet, sizeof(header) + payloadLength)) {
                 allFragmentsSent = false;
                 break;
             }
@@ -424,6 +603,11 @@ bool sendFrame(const RelayFrame& relayFrame) {
 
         if (allFragmentsSent) {
             incrementStat(&RelayStats::framesSent);
+            portENTER_CRITICAL(&relayMux);
+            if (childIndex < childCount) {
+                ++childPeers[childIndex].framesSent;
+            }
+            portEXIT_CRITICAL(&relayMux);
             RelayAckEvent ack{};
             if (xQueueReceive(relayAckQueue, &ack,
                               pdMS_TO_TICKS(RELAY_ACK_TIMEOUT_MS)) == pdTRUE) {
@@ -434,6 +618,13 @@ bool sendFrame(const RelayFrame& relayFrame) {
                 ++stats.framesAcked;
                 stats.lastAckMillis = millis();
                 portEXIT_CRITICAL(&statsMux);
+                portENTER_CRITICAL(&relayMux);
+                if (childIndex < childCount) {
+                    ++childPeers[childIndex].framesAcked;
+                    childPeers[childIndex].lastAckMillis = millis();
+                }
+                portEXIT_CRITICAL(&relayMux);
+                recordChildFrameOutcome(childIndex, true);
                 return true;
             }
             if (isChildPairingActive()) {
@@ -441,14 +632,48 @@ bool sendFrame(const RelayFrame& relayFrame) {
                 return false;
             }
             incrementStat(&RelayStats::ackTimeouts);
+            portENTER_CRITICAL(&relayMux);
+            if (childIndex < childCount) {
+                ++childPeers[childIndex].ackTimeouts;
+            }
+            portEXIT_CRITICAL(&relayMux);
         }
         if (attempt < RELAY_FRAME_RETRY_COUNT) {
             incrementStat(&RelayStats::frameRetries);
+            portENTER_CRITICAL(&relayMux);
+            if (childIndex < childCount) {
+                ++childPeers[childIndex].frameRetries;
+            }
+            portEXIT_CRITICAL(&relayMux);
         }
     }
 
     clearWaitingForAck();
+    recordChildFrameOutcome(childIndex, false);
     return false;
+}
+
+bool sendFrame(const RelayFrame& relayFrame) {
+    RelayChildStatus children[RELAY_MAX_CHILDREN] = {};
+    const size_t count = copyChildren(children, RELAY_MAX_CHILDREN);
+    bool anyDelivered = false;
+    for (size_t index = 0; index < count; ++index) {
+        if (isChildPairingActive()) {
+            clearWaitingForAck();
+            return anyDelivered;
+        }
+        if (childIsCoolingDown(index, millis())) {
+            continue;
+        }
+        const bool delivered = sendFrameToChild(relayFrame, children[index].mac, index);
+        anyDelivered = anyDelivered || delivered;
+        if (!delivered) {
+            Serial.printf("[RELAY][RTCM][WARN] child=%s frame=%lu delivery=failed\n",
+                          macToString(children[index].mac).c_str(),
+                          static_cast<unsigned long>(relayFrame.frameSequence));
+        }
+    }
+    return anyDelivered;
 }
 
 } // namespace
@@ -467,9 +692,8 @@ bool relaySetup() {
         return false;
     }
     relayFrameQueue = xQueueCreate(RELAY_QUEUE_LENGTH, sizeof(RelayFrame));
-    relayAckQueue = xQueueCreate(4, sizeof(RelayAckEvent));
-    relayLlhQueue = xQueueCreate(RELAY_LLH_QUEUE_LENGTH, sizeof(RelayLlhEnvelope));
-    if (relayFrameQueue == nullptr || relayAckQueue == nullptr || relayLlhQueue == nullptr) {
+    relayAckQueue = xQueueCreate(RELAY_MAX_CHILDREN * 2, sizeof(RelayAckEvent));
+    if (relayFrameQueue == nullptr || relayAckQueue == nullptr) {
         Serial.println("[RELAY][ERROR] Khong tao duoc relay queue");
         if (relayFrameQueue != nullptr) {
             vQueueDelete(relayFrameQueue);
@@ -479,24 +703,31 @@ bool relaySetup() {
             vQueueDelete(relayAckQueue);
             relayAckQueue = nullptr;
         }
-        if (relayLlhQueue != nullptr) {
-            vQueueDelete(relayLlhQueue);
-            relayLlhQueue = nullptr;
-        }
         return false;
     }
 
-    uint8_t storedMac[6] = {};
-    if (loadStoredChildMac(storedMac) && addPeer(storedMac, ESPNOW_ENCRYPTION_ENABLED)) {
-        std::memcpy(childMac, storedMac, 6);
-        hasChildMac = true;
-        setStoredChildStat(true);
-        Serial.println("[RELAY] Loaded child MAC from NVS: " + macToString(childMac));
-    } else {
+    loadStoredChildren();
+    size_t readyChildren = 0;
+    for (size_t index = 0; index < childCount; ++index) {
+        if (addPeer(childPeers[index].mac, ESPNOW_ENCRYPTION_ENABLED)) {
+            ++readyChildren;
+            Serial.printf("[RELAY] Loaded child[%u] MAC=%s\n",
+                          static_cast<unsigned>(index),
+                          macToString(childPeers[index].mac).c_str());
+        }
+    }
+    if (childCount == 0) {
         Serial.println("[RELAY] No stored child MAC; hold pairing button after Base pairing");
+    } else if (readyChildren != childCount) {
+        Serial.printf("[RELAY][WARN] Runtime peers ready=%u stored=%u\n",
+                      static_cast<unsigned>(readyChildren),
+                      static_cast<unsigned>(childCount));
     }
     relayReady = true;
-    Serial.println("[RELAY] Downstream relay ready");
+    Serial.printf("[RELAY] Downstream relay ready children=%u max=%u clear_hold_ms=%lu\n",
+                  static_cast<unsigned>(childCount),
+                  static_cast<unsigned>(RELAY_MAX_CHILDREN),
+                  static_cast<unsigned long>(RELAY_CHILD_CLEAR_HOLD_MS));
     return true;
 }
 
@@ -508,6 +739,49 @@ bool relayIsChildPairingActive() {
     return ROVER_RELAY_MODE && isChildPairingActive();
 }
 
+void clearAllChildren() {
+    if (isChildPairingActive()) {
+        stopChildPairing("clear all children");
+    }
+    uint8_t removedMacs[RELAY_MAX_CHILDREN][6] = {};
+    size_t removedCount = 0;
+    portENTER_CRITICAL(&relayMux);
+    removedCount = childCount;
+    for (size_t index = 0; index < childCount; ++index) {
+        std::memcpy(removedMacs[index], childPeers[index].mac, 6);
+    }
+    std::memset(childPeers, 0, sizeof(childPeers));
+    std::memset(childLlhSlots, 0, sizeof(childLlhSlots));
+    childCount = 0;
+    llhRoundRobinIndex = 0;
+    waitingForAck = false;
+    std::memset(expectedAckMac, 0, sizeof(expectedAckMac));
+    portEXIT_CRITICAL(&relayMux);
+
+    for (size_t index = 0; index < removedCount; ++index) {
+        if (esp_now_is_peer_exist(removedMacs[index])) {
+            esp_now_del_peer(removedMacs[index]);
+        }
+    }
+    if (relayFrameQueue != nullptr) {
+        xQueueReset(relayFrameQueue);
+    }
+    if (relayAckQueue != nullptr) {
+        xQueueReset(relayAckQueue);
+    }
+    portENTER_CRITICAL(&statsMux);
+    stats.queueDepth = 0;
+    portEXIT_CRITICAL(&statsMux);
+    updateChildCountStats();
+    incrementStat(&RelayStats::childClearEvents);
+    if (!clearStoredChildrenNvs()) {
+        Serial.println("[RELAY][CHILD_CLEAR][ERROR] Khong xoa duoc danh sach child trong NVS");
+    }
+    Serial.printf("[RELAY][CHILD_CLEAR] Removed %u child(s) after %lu ms hold\n",
+                  static_cast<unsigned>(removedCount),
+                  static_cast<unsigned long>(RELAY_CHILD_CLEAR_HOLD_MS));
+}
+
 void relayLoop() {
     if (!ROVER_RELAY_MODE || !relayReady) {
         return;
@@ -515,22 +789,32 @@ void relayLoop() {
 
     static uint32_t pressedSinceMs = 0;
     static bool pairingStartHandled = false;
+    static bool clearHandled = false;
     uint8_t baseMac[6] = {};
     const bool hasBase = espnowGetBaseMac(baseMac);
     const bool rawLevel = digitalRead(PAIRING_BUTTON_PIN) == HIGH;
     const bool pressed = PAIRING_BUTTON_ACTIVE_LOW ? !rawLevel : rawLevel;
     const uint32_t now = millis();
 
-    if (hasBase && pressed) {
+    if (pressed) {
         if (pressedSinceMs == 0) {
             pressedSinceMs = now;
-        } else if (!pairingStartHandled && now - pressedSinceMs >= PAIRING_BUTTON_HOLD_MS) {
-            startChildPairing();
-            pairingStartHandled = true;
+        } else {
+            const uint32_t heldMs = now - pressedSinceMs;
+            if (!clearHandled && heldMs >= RELAY_CHILD_CLEAR_HOLD_MS) {
+                clearAllChildren();
+                clearHandled = true;
+                pairingStartHandled = true;
+            } else if (hasBase && !pairingStartHandled &&
+                       heldMs >= PAIRING_BUTTON_HOLD_MS) {
+                startChildPairing();
+                pairingStartHandled = true;
+            }
         }
     } else if (!pressed) {
         pressedSinceMs = 0;
         pairingStartHandled = false;
+        clearHandled = false;
     }
 
     bool active = false;
@@ -567,7 +851,10 @@ bool relayQueueFrame(const uint8_t* frame,
         incrementStat(&RelayStats::framesSuppressedDuringPairing);
         return false;
     }
-    if (!hasChildMac) {
+    portENTER_CRITICAL(&relayMux);
+    const bool hasChildren = childCount > 0;
+    portEXIT_CRITICAL(&relayMux);
+    if (!hasChildren) {
         incrementStat(&RelayStats::framesWithoutChild);
         return false;
     }
@@ -618,23 +905,49 @@ bool relayProcessNextFrame(TickType_t waitTicks) {
 }
 
 bool relayProcessNextLlh(TickType_t waitTicks) {
-    if (!ROVER_RELAY_MODE || !relayReady || relayLlhQueue == nullptr) {
+    if (!ROVER_RELAY_MODE || !relayReady) {
         vTaskDelay(waitTicks);
         return false;
     }
 
-    RelayLlhEnvelope envelope{};
-    if (xQueueReceive(relayLlhQueue, &envelope, waitTicks) != pdTRUE) {
+    rtcm_espnow::RoverLlhStatusPacket childPacket{};
+    uint8_t sourceChildMac[6] = {};
+    size_t selectedIndex = RELAY_MAX_CHILDREN;
+    portENTER_CRITICAL(&relayMux);
+    for (size_t offset = 0; offset < childCount; ++offset) {
+        const size_t index = (llhRoundRobinIndex + offset) % childCount;
+        if (childLlhSlots[index].pending) {
+            selectedIndex = index;
+            childPacket = childLlhSlots[index].packet;
+            childLlhSlots[index].pending = false;
+            std::memcpy(sourceChildMac, childPeers[index].mac, 6);
+            llhRoundRobinIndex = (index + 1) % childCount;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&relayMux);
+    if (selectedIndex >= RELAY_MAX_CHILDREN) {
+        vTaskDelay(waitTicks);
         return false;
     }
     if (isChildPairingActive()) {
         incrementStat(&RelayStats::childLlhForwardSkipped);
+        portENTER_CRITICAL(&relayMux);
+        if (selectedIndex < childCount) {
+            ++childPeers[selectedIndex].llhForwardSkipped;
+        }
+        portEXIT_CRITICAL(&relayMux);
         return false;
     }
 
     uint8_t baseMac[6] = {};
     if (!espnowGetBaseMac(baseMac)) {
         incrementStat(&RelayStats::childLlhForwardSkipped);
+        portENTER_CRITICAL(&relayMux);
+        if (selectedIndex < childCount) {
+            ++childPeers[selectedIndex].llhForwardSkipped;
+        }
+        portEXIT_CRITICAL(&relayMux);
         return false;
     }
 
@@ -642,13 +955,18 @@ bool relayProcessNextLlh(TickType_t waitTicks) {
     forwarded.common.magic = rtcm_espnow::MAGIC;
     forwarded.common.version = rtcm_espnow::VERSION;
     forwarded.common.packetType = rtcm_espnow::PACKET_TYPE_RELAYED_ROVER_LLH_STATUS;
-    forwarded.sequence = envelope.packet.sequence;
-    std::memcpy(forwarded.roverMac, envelope.childMac, sizeof(forwarded.roverMac));
-    forwarded.latitudeE7 = envelope.packet.latitudeE7;
-    forwarded.longitudeE7 = envelope.packet.longitudeE7;
-    forwarded.heightMm = envelope.packet.heightMm;
+    forwarded.sequence = childPacket.sequence;
+    std::memcpy(forwarded.roverMac, sourceChildMac, sizeof(forwarded.roverMac));
+    forwarded.latitudeE7 = childPacket.latitudeE7;
+    forwarded.longitudeE7 = childPacket.longitudeE7;
+    forwarded.heightMm = childPacket.heightMm;
     if (!rtcm_espnow::validateRelayedRoverLlhStatus(forwarded, sizeof(forwarded))) {
         incrementStat(&RelayStats::childLlhForwardFailures);
+        portENTER_CRITICAL(&relayMux);
+        if (selectedIndex < childCount) {
+            ++childPeers[selectedIndex].llhForwardFailures;
+        }
+        portEXIT_CRITICAL(&relayMux);
         return false;
     }
 
@@ -658,20 +976,35 @@ bool relayProcessNextLlh(TickType_t waitTicks) {
         sizeof(forwarded));
     if (result == EspNowTxResult::Busy) {
         incrementStat(&RelayStats::childLlhForwardSkipped);
+        portENTER_CRITICAL(&relayMux);
+        if (selectedIndex < childCount) {
+            ++childPeers[selectedIndex].llhForwardSkipped;
+        }
+        portEXIT_CRITICAL(&relayMux);
         return false;
     }
     if (result != EspNowTxResult::Success) {
         incrementStat(&RelayStats::childLlhForwardFailures);
         Serial.printf("[RELAY][LLH][WARN] child=%s seq=%lu result=%s\n",
-                      macToString(envelope.childMac).c_str(),
+                      macToString(sourceChildMac).c_str(),
                       static_cast<unsigned long>(forwarded.sequence),
                       espnowTxResultToString(result));
+        portENTER_CRITICAL(&relayMux);
+        if (selectedIndex < childCount) {
+            ++childPeers[selectedIndex].llhForwardFailures;
+        }
+        portEXIT_CRITICAL(&relayMux);
         return false;
     }
 
     incrementStat(&RelayStats::childLlhForwarded);
+    portENTER_CRITICAL(&relayMux);
+    if (selectedIndex < childCount) {
+        ++childPeers[selectedIndex].llhForwarded;
+    }
+    portEXIT_CRITICAL(&relayMux);
     Serial.printf("[RELAY][LLH] Forwarded child=%s seq=%lu\n",
-                  macToString(envelope.childMac).c_str(),
+                  macToString(sourceChildMac).c_str(),
                   static_cast<unsigned long>(forwarded.sequence));
     return true;
 }
@@ -700,36 +1033,37 @@ bool relayHandleReceivedPacket(const uint8_t* sourceMac,
         return active;
     }
 
+    const size_t sourceChildIndex = findChildIndex(sourceMac);
     if (common.packetType == rtcm_espnow::PACKET_TYPE_ROVER_LLH_STATUS &&
-        isChild(sourceMac)) {
+        sourceChildIndex < RELAY_MAX_CHILDREN) {
         if (length != static_cast<int>(sizeof(rtcm_espnow::RoverLlhStatusPacket))) {
             incrementStat(&RelayStats::childLlhInvalid);
             return true;
         }
-        RelayLlhEnvelope envelope{};
-        std::memcpy(&envelope.packet, data, sizeof(envelope.packet));
-        if (!rtcm_espnow::validateRoverLlhStatus(envelope.packet,
-                                                 sizeof(envelope.packet))) {
+        rtcm_espnow::RoverLlhStatusPacket packet{};
+        std::memcpy(&packet, data, sizeof(packet));
+        if (!rtcm_espnow::validateRoverLlhStatus(packet, sizeof(packet))) {
             incrementStat(&RelayStats::childLlhInvalid);
             return true;
         }
-        std::memcpy(envelope.childMac, sourceMac, sizeof(envelope.childMac));
-        if (relayLlhQueue == nullptr) {
-            incrementStat(&RelayStats::childLlhForwardFailures);
-            return true;
+        bool overwritten = false;
+        portENTER_CRITICAL(&relayMux);
+        if (sourceChildIndex < childCount) {
+            overwritten = childLlhSlots[sourceChildIndex].pending;
+            childLlhSlots[sourceChildIndex].packet = packet;
+            childLlhSlots[sourceChildIndex].pending = true;
+            ++childPeers[sourceChildIndex].llhReceived;
         }
-        if (uxQueueMessagesWaiting(relayLlhQueue) > 0) {
+        portEXIT_CRITICAL(&relayMux);
+        if (overwritten) {
             incrementStat(&RelayStats::childLlhQueueOverwrites);
-        }
-        if (xQueueOverwrite(relayLlhQueue, &envelope) != pdPASS) {
-            incrementStat(&RelayStats::childLlhForwardFailures);
-            return true;
         }
         incrementStat(&RelayStats::childLlhReceived);
         return true;
     }
 
-    if (common.packetType != rtcm_espnow::PACKET_TYPE_FRAME_ACK || !isChild(sourceMac)) {
+    if (common.packetType != rtcm_espnow::PACKET_TYPE_FRAME_ACK ||
+        sourceChildIndex >= RELAY_MAX_CHILDREN) {
         return false;
     }
     rtcm_espnow::RtcmEspNowAck ack{};
@@ -744,10 +1078,14 @@ bool relayHandleReceivedPacket(const uint8_t* sourceMac,
     bool matches = false;
     portENTER_CRITICAL(&relayMux);
     matches = waitingForAck && ack.streamId == expectedAckStreamId &&
-              ack.frameSequence == expectedAckSequence;
+              ack.frameSequence == expectedAckSequence &&
+              std::memcmp(sourceMac, expectedAckMac, 6) == 0;
     portEXIT_CRITICAL(&relayMux);
     if (matches && relayAckQueue != nullptr) {
-        RelayAckEvent event{ack.streamId, ack.frameSequence};
+        RelayAckEvent event{};
+        std::memcpy(event.sourceMac, sourceMac, sizeof(event.sourceMac));
+        event.streamId = ack.streamId;
+        event.frameSequence = ack.frameSequence;
         xQueueSend(relayAckQueue, &event, 0);
     }
     return true;
@@ -761,9 +1099,21 @@ RelayStats relayGetStats() {
 }
 
 bool relayGetChildMac(uint8_t mac[6]) {
-    if (mac == nullptr || !hasChildMac) {
+    if (mac == nullptr) {
         return false;
     }
-    std::memcpy(mac, childMac, 6);
+    portENTER_CRITICAL(&relayMux);
+    const bool available = childCount > 0;
+    if (available) {
+        std::memcpy(mac, childPeers[0].mac, 6);
+    }
+    portEXIT_CRITICAL(&relayMux);
+    if (!available) {
+        return false;
+    }
     return true;
+}
+
+size_t relayCopyChildren(RelayChildStatus* destination, size_t capacity) {
+    return copyChildren(destination, capacity);
 }
