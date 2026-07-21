@@ -15,8 +15,23 @@ inline constexpr uint8_t PACKET_TYPE_PAIR_RESPONSE = 4;
 inline constexpr uint8_t PACKET_TYPE_PAIR_CONFIRM = 5;
 inline constexpr uint8_t PACKET_TYPE_ROVER_LLH_STATUS = 6;
 inline constexpr uint8_t PACKET_TYPE_RELAYED_ROVER_LLH_STATUS = 7;
+inline constexpr uint8_t PACKET_TYPE_GNSS_COMMAND_REQUEST = 8;
+inline constexpr uint8_t PACKET_TYPE_GNSS_COMMAND_RESULT = 9;
 inline constexpr uint8_t ROLE_BASE = 1;
 inline constexpr uint8_t ROLE_ROVER = 2;
+inline constexpr uint8_t GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN = 1;
+inline constexpr uint8_t GNSS_COMMAND_SWITCH_TO_ROVER = 2;
+inline constexpr uint8_t GNSS_PORT_COM2 = 2;
+inline constexpr uint8_t GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN = 1;
+inline constexpr uint8_t GNSS_COMMAND_STATUS_REJECTED = 2;
+inline constexpr uint8_t GNSS_COMMAND_STATUS_UART_ERROR = 3;
+inline constexpr uint8_t GNSS_COMMAND_STATUS_BUSY = 4;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_NONE = 0;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_INVALID_REQUEST = 1;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_QUEUE_FULL = 2;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_UART_WRITE = 3;
+inline constexpr uint32_t GNSS_SURVEY_MIN_SECONDS = 10;
+inline constexpr uint32_t GNSS_SURVEY_MAX_SECONDS = 86400;
 inline constexpr uint8_t ACK_STATUS_WRITTEN = 1;
 inline constexpr double LLH_COORDINATE_SCALE = 10000000.0;
 inline constexpr double LLH_HEIGHT_SCALE = 1000.0;
@@ -75,6 +90,30 @@ struct RelayedRoverLlhStatusPacket {
     int32_t heightMm;
 };
 
+struct GnssCommandRequestPacket {
+    EspNowCommonHeader common;
+    uint32_t networkId;
+    uint32_t transactionId;
+    uint32_t surveyDurationSeconds;
+    uint8_t commandId;
+    uint8_t targetPort;
+    uint16_t reserved;
+    uint32_t authTag;
+};
+
+struct GnssCommandResultPacket {
+    EspNowCommonHeader common;
+    uint32_t networkId;
+    uint32_t transactionId;
+    uint8_t commandId;
+    uint8_t status;
+    uint8_t completedStep;
+    uint8_t totalSteps;
+    uint16_t detailCode;
+    uint16_t reserved;
+    uint32_t authTag;
+};
+
 struct PairDiscoveryPacket {
     EspNowCommonHeader common;
     uint8_t role;
@@ -114,6 +153,10 @@ static_assert(sizeof(RtcmEspNowAck) == 12, "RTCM ESP-NOW ACK must be 12 bytes");
 static_assert(sizeof(RoverLlhStatusPacket) == 20, "ROVER_LLH_STATUS must be 20 bytes");
 static_assert(sizeof(RelayedRoverLlhStatusPacket) == 28,
               "RELAYED_ROVER_LLH_STATUS must be 28 bytes");
+static_assert(sizeof(GnssCommandRequestPacket) == 24,
+              "GNSS_COMMAND_REQUEST must be 24 bytes");
+static_assert(sizeof(GnssCommandResultPacket) == 24,
+              "GNSS_COMMAND_RESULT must be 24 bytes");
 static_assert(sizeof(PairDiscoveryPacket) == 28, "PAIR_DISCOVERY must be 28 bytes");
 static_assert(sizeof(PairResponsePacket) == 28, "PAIR_RESPONSE must be 28 bytes");
 static_assert(sizeof(PairConfirmPacket) == 24, "PAIR_CONFIRM must be 24 bytes");
@@ -128,6 +171,16 @@ bool validateRoverLlhStatus(const RoverLlhStatusPacket& packet,
                             std::size_t receivedLength);
 bool validateRelayedRoverLlhStatus(const RelayedRoverLlhStatusPacket& packet,
                                    std::size_t receivedLength);
+bool validateGnssCommandRequest(const GnssCommandRequestPacket& packet,
+                                std::size_t receivedLength,
+                                uint32_t expectedNetworkId,
+                                const uint8_t* pairingKey,
+                                std::size_t pairingKeyLength);
+bool validateGnssCommandResult(const GnssCommandResultPacket& packet,
+                               std::size_t receivedLength,
+                               uint32_t expectedNetworkId,
+                               const uint8_t* pairingKey,
+                               std::size_t pairingKeyLength);
 
 uint32_t computePairingAuthTag(const uint8_t* data,
                                std::size_t lengthWithoutAuthTag,
@@ -140,6 +193,12 @@ uint32_t pairingAuthTag(const PairResponsePacket& packet,
                         const uint8_t* pairingKey,
                         std::size_t pairingKeyLength);
 uint32_t pairingAuthTag(const PairConfirmPacket& packet,
+                        const uint8_t* pairingKey,
+                        std::size_t pairingKeyLength);
+uint32_t pairingAuthTag(const GnssCommandRequestPacket& packet,
+                        const uint8_t* pairingKey,
+                        std::size_t pairingKeyLength);
+uint32_t pairingAuthTag(const GnssCommandResultPacket& packet,
                         const uint8_t* pairingKey,
                         std::size_t pairingKeyLength);
 bool validatePairDiscovery(const PairDiscoveryPacket& packet,

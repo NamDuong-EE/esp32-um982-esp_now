@@ -86,6 +86,46 @@ bool validateRelayedRoverLlhStatus(const RelayedRoverLlhStatusPacket& packet,
            packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000;
 }
 
+bool validateGnssCommandRequest(const GnssCommandRequestPacket& packet,
+                                std::size_t receivedLength,
+                                uint32_t expectedNetworkId,
+                                const uint8_t* pairingKey,
+                                std::size_t pairingKeyLength) {
+    const bool validCommandParameters =
+        (packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN &&
+         packet.surveyDurationSeconds >= GNSS_SURVEY_MIN_SECONDS &&
+         packet.surveyDurationSeconds <= GNSS_SURVEY_MAX_SECONDS) ||
+        (packet.commandId == GNSS_COMMAND_SWITCH_TO_ROVER &&
+         packet.surveyDurationSeconds == 0);
+    return receivedLength == sizeof(GnssCommandRequestPacket) &&
+           packet.common.magic == MAGIC &&
+           packet.common.version == VERSION &&
+           packet.common.packetType == PACKET_TYPE_GNSS_COMMAND_REQUEST &&
+           packet.networkId == expectedNetworkId &&
+           packet.transactionId != 0 &&
+           validCommandParameters &&
+           packet.targetPort == GNSS_PORT_COM2 &&
+           packet.authTag == pairingAuthTag(packet, pairingKey, pairingKeyLength);
+}
+
+bool validateGnssCommandResult(const GnssCommandResultPacket& packet,
+                               std::size_t receivedLength,
+                               uint32_t expectedNetworkId,
+                               const uint8_t* pairingKey,
+                               std::size_t pairingKeyLength) {
+    return receivedLength == sizeof(GnssCommandResultPacket) &&
+           packet.common.magic == MAGIC &&
+           packet.common.version == VERSION &&
+           packet.common.packetType == PACKET_TYPE_GNSS_COMMAND_RESULT &&
+           packet.networkId == expectedNetworkId &&
+           packet.transactionId != 0 &&
+           (packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN ||
+            packet.commandId == GNSS_COMMAND_SWITCH_TO_ROVER) &&
+           packet.status >= GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN &&
+           packet.status <= GNSS_COMMAND_STATUS_BUSY &&
+           packet.authTag == pairingAuthTag(packet, pairingKey, pairingKeyLength);
+}
+
 uint32_t computePairingAuthTag(const uint8_t* data,
                                std::size_t lengthWithoutAuthTag,
                                const uint8_t* pairingKey,
@@ -131,6 +171,24 @@ uint32_t pairingAuthTag(const PairConfirmPacket& packet,
                         std::size_t pairingKeyLength) {
     return computePairingAuthTag(reinterpret_cast<const uint8_t*>(&packet),
                                  offsetof(PairConfirmPacket, authTag),
+                                 pairingKey,
+                                 pairingKeyLength);
+}
+
+uint32_t pairingAuthTag(const GnssCommandRequestPacket& packet,
+                        const uint8_t* pairingKey,
+                        std::size_t pairingKeyLength) {
+    return computePairingAuthTag(reinterpret_cast<const uint8_t*>(&packet),
+                                 offsetof(GnssCommandRequestPacket, authTag),
+                                 pairingKey,
+                                 pairingKeyLength);
+}
+
+uint32_t pairingAuthTag(const GnssCommandResultPacket& packet,
+                        const uint8_t* pairingKey,
+                        std::size_t pairingKeyLength) {
+    return computePairingAuthTag(reinterpret_cast<const uint8_t*>(&packet),
+                                 offsetof(GnssCommandResultPacket, authTag),
                                  pairingKey,
                                  pairingKeyLength);
 }

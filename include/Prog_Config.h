@@ -25,6 +25,11 @@ inline constexpr bool SERIAL_DEBUG_STATUS_OUTPUT_ENABLED =
 inline constexpr uint32_t SERIAL_DEBUG_STATUS_INTERVAL_MS = 1000;
 inline constexpr uint32_t ROVER_LLH_STATUS_INTERVAL_MS = 1000;
 inline constexpr uint32_t ROVER_LLH_MAX_GGA_AGE_MS = 3000;
+inline constexpr std::size_t GNSS_COMMAND_QUEUE_LENGTH = 4;
+inline constexpr uint32_t GNSS_COMMAND_UART_LOCK_TIMEOUT_MS = 2000;
+inline constexpr uint32_t GNSS_COMMAND_UNLOG_DELAY_MS = 1000;
+inline constexpr uint32_t GNSS_COMMAND_MODE_DELAY_MS = 2000;
+inline constexpr uint32_t GNSS_COMMAND_OUTPUT_DELAY_MS = 200;
 
 // ================= OPERATING MODE =================
 // Override from PlatformIO with -D ROVER_RELAY_MODE_ENABLED=1 to build the

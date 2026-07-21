@@ -4,6 +4,7 @@
 #include <freertos/semphr.h>
 
 #include "Prog_Config.h"
+#include "functions/Gnss_Command_Handler.h"
 #include "hardware/Espnow_handler.h"
 #include "hardware/Relay_handler.h"
 #include "protocol/RtcmEspNowProtocol.h"
@@ -69,6 +70,9 @@ void recordSequenceGap(uint16_t streamId, uint32_t sequence) {
 }
 
 bool writeFrameToGnss() {
+    if (!gnssCommandAcceptsRtcmCorrection()) {
+        return false;
+    }
     if (gnssTxMutex == nullptr ||
         xSemaphoreTake(gnssTxMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) != pdTRUE) {
         espnowRecordUartWriteError();

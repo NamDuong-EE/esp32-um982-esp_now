@@ -99,6 +99,12 @@ void setup() {
             Serial.println("[SETUP][WARN] Relay downstream chua san sang");
         }
     }
+    if (!gnssCommandSetup()) {
+        Serial.println("[SETUP][FATAL] GNSS command manager init failed");
+        while (true) {
+            delay(1000);
+        }
+    }
     if constexpr (DEBUG_WEB_ENABLED) {
         if (espnowIsReady() && !debugWebSetup()) {
             Serial.println("[SETUP][WARN] Debug web chua hoat dong");
@@ -118,6 +124,7 @@ void setup() {
     createRequiredTask(gnssPublishTask, "GNSS Publish", 4096, 2, 0);
     createRequiredTask(healthCheckTask, "Health", 4096, 1, 1);
     createRequiredTask(roverLlhStatusTask, "LLH Status", 3072, 1, 1);
+    createRequiredTask(gnssCommandTask, "GNSS Command", 4096, 2, 1);
     if constexpr (ROVER_RELAY_MODE) {
         createRequiredTask(relaySendTask, "RTCM Relay", 4096, 3, 1);
     }
@@ -143,6 +150,14 @@ void gnssParseTask(void* parameter) {
     currentLine.reserve(512);
 
     while (true) {
+        if (!gnssCommandAcceptsRtcmCorrection()) {
+            while (Serial1.available()) {
+                Serial1.read();
+            }
+            currentLine = "";
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
         while (Serial1.available()) {
             const char value = static_cast<char>(Serial1.read());
             if (value == '\n') {
@@ -200,6 +215,20 @@ void healthCheckTask(void* parameter) {
             const String payload = formDeviceHealthString();
             Serial.print("[HEALTH] ");
             Serial.println(payload);
+            const GnssCommandStats command = gnssCommandGetStats();
+            Serial.printf(
+                "[ROVER][GNSS_CMD][HEALTH] rx=%lu invalid=%lu queue_overflow=%lu "
+                "duplicate=%lu completed=%lu result_sent=%lu result_fail=%lu "
+                "uart_fail=%lu promoted_to_base=%u\n",
+                static_cast<unsigned long>(command.requestsReceived),
+                static_cast<unsigned long>(command.requestsInvalid),
+                static_cast<unsigned long>(command.queueOverflow),
+                static_cast<unsigned long>(command.duplicateRequests),
+                static_cast<unsigned long>(command.sequencesCompleted),
+                static_cast<unsigned long>(command.resultsSent),
+                static_cast<unsigned long>(command.resultSendFailures),
+                static_cast<unsigned long>(command.uartWriteFailures),
+                command.promotedToBase ? 1U : 0U);
             if constexpr (MQTT_PUBLISH_HEALTH_ENABLED) {
                 if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
                     if (mqtt.connected()) {
@@ -222,7 +251,7 @@ void roverLlhStatusTask(void* parameter) {
     TickType_t lastWake = xTaskGetTickCount();
     while (true) {
         vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(ROVER_LLH_STATUS_INTERVAL_MS));
-        if (!espnowIsReady()) {
+        if (!espnowIsReady() || !gnssCommandAcceptsRtcmCorrection()) {
             continue;
         }
 

@@ -17,6 +17,7 @@
 #endif
 
 #include "Prog_Config.h"
+#include "functions/Gnss_Command_Handler.h"
 #include "hardware/Espnow_tx_manager.h"
 #include "hardware/Relay_handler.h"
 #include "hardware/Wifi_handler.h"
@@ -440,6 +441,10 @@ void handleReceivedPacket(const uint8_t* sourceMac, const uint8_t* data, int len
 
     if (!isExpectedRuntimeBase(sourceMac)) {
         updateCounter(&EspNowRtcmStats::packetsWrongSource);
+        return;
+    }
+    if (common.packetType == rtcm_espnow::PACKET_TYPE_GNSS_COMMAND_REQUEST) {
+        gnssCommandHandleRequest(sourceMac, data, length);
         return;
     }
     if (length < static_cast<int>(sizeof(rtcm_espnow::RtcmEspNowHeader))) {

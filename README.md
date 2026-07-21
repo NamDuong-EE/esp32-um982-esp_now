@@ -338,6 +338,44 @@ Nếu muốn bật lại MQTT:
 3. Cấu hình `WIFI_SSID`, `WIFI_PASSWORD` và thông tin MQTT.
 4. Khóa router 2.4 GHz cùng channel với `ESPNOW_WIFI_CHANNEL`.
 
+### Nhận lệnh đổi UM980 giữa Rover và temporary Base - V1
+
+Rover không cần kết nối MQTT. Base nhận MQTT command rồi gửi ESP-NOW unicast packet type `8` tới Rover trực tiếp đầu tiên đã pair. Rover chỉ chấp nhận action semantic `switch_to_base_survey_in` hoặc `switch_to_rover` có đúng source MAC Base, `network_id`, COM2, tham số hợp lệ và `auth_tag`; firmware không chạy chuỗi lệnh UART tùy ý từ mạng.
+
+Task `GNSS Command` khóa `gnssTxMutex` và ghi 14 bước xuống `Serial1`/UM980 COM2:
+
+```text
+1  unlogall
+2  mode base time <duration_s>
+3  gpgga com2 1
+4  rtcm1006 com2 1
+5  rtcm1033 com2 1
+6  rtcm1074 com2 1
+7  rtcm1124 com2 1
+8  rtcm1084 com2 1
+9  rtcm1094 com2 1
+10 rtcm1042 com2 1
+11 rtcm1019 com2 1
+12 rtcm1020 com2 1
+13 rtcm1045 com2 1
+14 saveconfig
+```
+
+Sau mỗi bước Rover cập nhật `completed_step`; sau bước cuối gửi packet result type `9` về Base. Request lặp với cùng source MAC, transaction ID và command ID chỉ gửi lại result gần nhất, không chạy lại chuỗi. Nếu chuyển sang Base thành công, Rover ngừng nhận RTCM correction, ngừng gửi LLH kiểu Rover và bỏ qua luồng COM2 nhị phân trong parser NMEA cho tới khi nhận `switch_to_rover` thành công hoặc reset.
+
+Action `switch_to_rover` ghi 4 bước để hoàn nguyên:
+
+```text
+1 unlogall
+2 mode rover survey
+3 gpgga com2 1
+4 saveconfig
+```
+
+Sau khi ghi thành công, Rover hạ cờ `promoted_to_base`, mở lại parser NMEA/LLH và trả result `4/4`; Base nhận result rồi bật lại gửi RTCM. Cú pháp này yêu cầu UM980 Build7923+ hoặc UM982 Build7650+ theo Commands Manual N4 của Unicore.
+
+Giới hạn V1: `uart_sequence_written` chỉ xác nhận ESP32 đã ghi đủ byte xuống UART, chưa parse phản hồi `OK/ERROR` của UM980 và chưa xác nhận survey-in hoàn tất. ESP32 vẫn chạy firmware Rover, chưa tự chuyển sang pipeline Base phát RTCM. Trạng thái đổi vai trò chỉ nằm trong RAM; reset sẽ trở về Rover. Lệnh không dùng `FRESET`.
+
 ### Debug web SoftAP tùy chọn
 
 Debug web được điều khiển trong `include/Prog_Config.h` và hiện đang tắt mặc định:
@@ -511,6 +549,8 @@ Task reassembly:
 | `src/hardware/Relay_handler.cpp` | Pair/lưu child, relay queue, chia fragment, gửi/retry và nhận ACK downstream |
 | `include/functions/Rtcm_EspNow_Handler.h` | API reassembly/validate RTCM |
 | `src/functions/Rtcm_EspNow_Handler.cpp` | Ghép fragment, kiểm tra CRC24Q và ghi vào UM980/982 |
+| `include/functions/Gnss_Command_Handler.h` | API queue, task và health của remote GNSS command |
+| `src/functions/Gnss_Command_Handler.cpp` | Validate request, ghi chuỗi COM2 và gửi result về Base |
 | `src/main.cpp` | Entry point firmware Rover |
 | `src/helper.cpp` | Parse NMEA, health counter, log Serial |
 | `include/hardware/DebugWeb_handler.h` | API debug web SoftAP tùy chọn |
@@ -683,8 +723,18 @@ Kiểm tra thêm với Relay mode:
 17. [x] Thêm Normal debug web và Relay debug web/API riêng.
 18. [ ] Kiểm thử phần cứng `Base → Relay → 5 Child`, bao gồm reset nguồn và tự nạp lại cả `base_mac`/danh sách child.
 19. [ ] Kiểm thử mất nguồn/mất sóng lần lượt từng Rover con để xác nhận upstream và các child còn lại vẫn hoạt động, cooldown/health downstream báo đúng.
+20. [x] Triển khai V1 nhận lệnh ESP-NOW từ Base để cấu hình UM980 thành Base survey-in qua COM2 và trả application result.
+21. [x] Thêm action `switch_to_rover` với chuỗi 4 lệnh COM2 và đồng bộ bật lại RTCM/LLH sau application result.
 
 ## Kết quả kiểm tra phần mềm gần nhất
+
+### Cập nhật 2026-07-21
+
+- Đã thêm packet command/result type `8/9` dùng chung với Base, có `network_id`, transaction ID và pairing auth tag.
+- Đã thêm queue/task `GNSS Command`, chuỗi 14 lệnh COM2, khóa UART dùng chung, deduplicate transaction gần nhất và health log `[ROVER][GNSS_CMD][HEALTH]`.
+- Sau khi ghi chuỗi thành công, firmware tạm dừng RTCM input/LLH output của vai trò Rover trong RAM. Chưa xác nhận trên phần cứng UM980 và chưa biến ESP32 thành Base runtime hoàn chỉnh.
+- Build xác nhận sau khi thêm hai chiều: Normal `esp32u_rover_espnow` SUCCESS, RAM 46.592/327.680 byte (14,2%), Flash 794.905/1.310.720 byte (60,6%); Relay `esp32u_rover_relay` SUCCESS, RAM 47.232 byte (14,4%), Flash 816.241 byte (62,3%). Native protocol test **8/8 PASSED**, gồm cả command ID về Rover, tham số và auth tamper.
+- Đã thêm command ID `2` để chuyển temporary Base về `mode rover survey`, bật lại nhận RTCM/gửi LLH trong RAM và trả result 4 bước về Base.
 
 - Lần kiểm tra phần mềm gần nhất: 2026-07-17.
 - PlatformIO Core: **6.1.19** tại `C:\Users\admin\.platformio\penv\Scripts\pio.exe`.
