@@ -64,7 +64,7 @@ int publishGGA(String &nmeaBuffer)
                     ggaDebugSnapshot.lat = ggaData.lat;
                     ggaDebugSnapshot.lon = ggaData.lon;
                     ggaDebugSnapshot.heightM = ggaData.height_m;
-                    ggaDebugSnapshot.fixQuality = static_cast<uint8_t>(ggaData.rtk_status.toInt());
+                    ggaDebugSnapshot.fixQuality = static_cast<uint8_t>(ggaData.fix_quality.toInt());
                     ggaDebugSnapshot.satellites = static_cast<uint8_t>(ggaData.satellites.toInt());
                     ggaDebugSnapshot.lastUpdateMs = millis();
                     xSemaphoreGive(nmeaBufferMutex);
@@ -118,15 +118,6 @@ String formSerialDebugStatusString()
                  baseMac[3], baseMac[4], baseMac[5]);
     }
 
-    const char* rtkStatus = "Invalid";
-    switch (gga.fixQuality) {
-        case 1: rtkStatus = "GPS Fix"; break;
-        case 2: rtkStatus = "DGPS"; break;
-        case 4: rtkStatus = "RTK Fixed"; break;
-        case 5: rtkStatus = "RTK Float"; break;
-        default: break;
-    }
-
     String payload;
     payload.reserve(3200);
     payload = "{\"mode\":\"";
@@ -137,7 +128,6 @@ String formSerialDebugStatusString()
     payload += ",\"lon\":" + String(gga.lon, 7);
     payload += ",\"height_m\":" + String(gga.heightM, 3);
     payload += ",\"fix_quality\":" + String(gga.fixQuality);
-    payload += ",\"rtk_status\":\"" + String(rtkStatus) + "\"";
     payload += ",\"satellites\":" + String(gga.satellites);
     payload += ",\"free_heap_bytes\":" + String(ESP.getFreeHeap());
     payload += ",\"last_gga_age_ms\":";

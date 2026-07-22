@@ -48,7 +48,8 @@ EspNowRtcmStats espnowGetStats();
 bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence);
 bool espnowTrySendRoverLlhStatus(double latitude,
                                  double longitude,
-                                 double heightM);
+                                 double heightM,
+                                 uint8_t fixQuality);
 bool espnowGetBaseMac(uint8_t mac[6]);
 
 void espnowRecordInvalidHeader();

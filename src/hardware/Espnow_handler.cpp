@@ -20,6 +20,7 @@
 #include "functions/Gnss_Command_Handler.h"
 #include "hardware/Espnow_tx_manager.h"
 #include "hardware/Relay_handler.h"
+#include "hardware/TemporaryBaseUplink.h"
 #include "hardware/Wifi_handler.h"
 
 namespace {
@@ -427,6 +428,13 @@ void handleReceivedPacket(const uint8_t* sourceMac, const uint8_t* data, int len
         if (relayHandleReceivedPacket(sourceMac, data, length)) {
             return;
         }
+    }
+
+    if (common.packetType == rtcm_espnow::PACKET_TYPE_TEMP_RTCM_ACK) {
+        if (!temporaryBaseUplinkHandleAck(sourceMac, data, length)) {
+            updateCounter(&EspNowRtcmStats::packetsInvalidHeader);
+        }
+        return;
     }
 
     if (common.packetType == rtcm_espnow::PACKET_TYPE_PAIR_DISCOVERY) {
@@ -878,7 +886,8 @@ bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence) {
 
 bool espnowTrySendRoverLlhStatus(double latitude,
                                  double longitude,
-                                 double heightM) {
+                                 double heightM,
+                                 uint8_t fixQuality) {
     static uint32_t statusSequence = 0;
     if (!ready || !hasActiveBaseMac) {
         updateCounter(&EspNowRtcmStats::llhStatusSkipped);
@@ -894,7 +903,7 @@ bool espnowTrySendRoverLlhStatus(double latitude,
     if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
         !std::isfinite(heightM) || latitude < -90.0 || latitude > 90.0 ||
         longitude < -180.0 || longitude > 180.0 ||
-        heightM < minHeightM || heightM > maxHeightM) {
+        heightM < minHeightM || heightM > maxHeightM || fixQuality > 8) {
         updateCounter(&EspNowRtcmStats::llhStatusFailures);
         return false;
     }
@@ -910,6 +919,7 @@ bool espnowTrySendRoverLlhStatus(double latitude,
         std::llround(longitude * rtcm_espnow::LLH_COORDINATE_SCALE));
     packet.heightMm = static_cast<int32_t>(
         std::llround(heightM * rtcm_espnow::LLH_HEIGHT_SCALE));
+    packet.fixQuality = fixQuality;
     if (!rtcm_espnow::validateRoverLlhStatus(packet, sizeof(packet))) {
         updateCounter(&EspNowRtcmStats::llhStatusFailures);
         return false;
@@ -932,14 +942,15 @@ bool espnowTrySendRoverLlhStatus(double latitude,
     }
 
     updateCounter(&EspNowRtcmStats::llhStatusSent);
-    Serial.printf("[ROVER][LLH_TX] seq=%lu lat=%.7f lon=%.7f height_m=%.3f\n",
+    Serial.printf("[ROVER][LLH_TX] seq=%lu lat=%.7f lon=%.7f height_m=%.3f fix_quality=%u\n",
                   static_cast<unsigned long>(packet.sequence),
                   static_cast<double>(packet.latitudeE7) /
                       rtcm_espnow::LLH_COORDINATE_SCALE,
                   static_cast<double>(packet.longitudeE7) /
                       rtcm_espnow::LLH_COORDINATE_SCALE,
                   static_cast<double>(packet.heightMm) /
-                      rtcm_espnow::LLH_HEIGHT_SCALE);
+                      rtcm_espnow::LLH_HEIGHT_SCALE,
+                  static_cast<unsigned>(packet.fixQuality));
     return true;
 }
 

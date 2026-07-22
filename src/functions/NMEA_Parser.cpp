@@ -14,9 +14,9 @@ double nmeaToDecimal(String nmeaPos, String dir) {
 String parseGGA_toJSON(gga_data_struct ggaData) {
   char jsonPayload[128];
   snprintf(jsonPayload, sizeof(jsonPayload), 
-            "{\"lat\":%.7f,\"lon\":%.7f,\"height_m\":%.3f,\"rtk_status\":%s,\"satellites\":%s}",
+            "{\"lat\":%.7f,\"lon\":%.7f,\"height_m\":%.3f,\"fix_quality\":%s,\"satellites\":%s}",
             ggaData.lat, ggaData.lon, ggaData.height_m,
-            ggaData.rtk_status.c_str(), ggaData.satellites.c_str());
+            ggaData.fix_quality.c_str(), ggaData.satellites.c_str());
             
   return String(jsonPayload);
 }
@@ -47,7 +47,7 @@ boolean parseGGA_toStruct(String ggaMsg, gga_data_struct &ggaData) {
       ggaData.lat = latDD;
       ggaData.lon = lonDD;
       ggaData.height_m = heightStr.toDouble();
-      ggaData.rtk_status = rtkStr;
+      ggaData.fix_quality = rtkStr;
       ggaData.satellites = satStr;
                
       return true;

@@ -82,7 +82,7 @@
     <div class="card"><div class="label">Latitude</div><div id="lat" class="value coord">--</div></div>
     <div class="card"><div class="label">Longitude</div><div id="lon" class="value coord">--</div></div>
     <div class="card"><div class="label">Height</div><div id="height" class="value">--</div></div>
-    <div class="card wide"><div class="label">RTK status</div><div id="rtk" class="value">--</div></div>
+    <div class="card wide"><div class="label">Fix quality</div><div id="fixQuality" class="value">--</div></div>
     <div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div>
   </section>
 
@@ -175,10 +175,10 @@
       row.append(name,value); target.appendChild(row);
     });
   }
-  function setRtk(device, valid) {
+  function setFixQuality(device, valid) {
     const quality = Number(device.fix_quality || 0);
-    $('rtk').textContent = valid ? String(quality) : '--';
-    $('rtk').className = 'value ' + (quality === 4 ? 'ok' : quality === 5 ? 'warn' : 'bad');
+    $('fixQuality').textContent = valid ? String(quality) : '--';
+    $('fixQuality').className = 'value ' + (quality === 4 ? 'ok' : quality === 5 ? 'warn' : 'bad');
   }
   function updateDashboard(data) {
     const device = data.device || data.gga || {};
@@ -189,7 +189,7 @@
     $('height').textContent = valid ? `${Number(device.height_m || 0).toFixed(3)} m` : '--';
     $('sats').textContent = valid ? text(device.satellites) : '--';
     $('ggaAge').textContent = valid ? `GGA age ${ageText(device.last_gga_age_ms)}` : 'Waiting for valid GGA';
-    setRtk(device, valid);
+    setFixQuality(device, valid);
 
     const up = data.upstream || {};
     const relay = data.mode === 'relay';
@@ -202,7 +202,7 @@
   function healthFallback(h) {
     updateDashboard({
       mode:h.mode || 'normal',
-      device:{gga_valid:h.gga_valid,lat:h.lat,lon:h.lon,height_m:h.height_m,fix_quality:h.fix_quality,rtk_status:h.rtk_status,satellites:h.satellites,last_gga_age_ms:h.last_gga_age_ms,free_heap_bytes:h.free_heap_bytes},
+      device:{gga_valid:h.gga_valid,lat:h.lat,lon:h.lon,height_m:h.height_m,fix_quality:h.fix_quality,satellites:h.satellites,last_gga_age_ms:h.last_gga_age_ms,free_heap_bytes:h.free_heap_bytes},
       upstream:{espnow_ready:h.espnow_ready,paired:h.base_provisioned,mac:h.base_mac,pairing_active:h.pairing_active,pair_confirm_ok:h.pair_confirm_ok,frames_received:h.rtcm_frames,last_rtcm_age_ms:h.last_rtcm_age_ms,crc_errors:h.rtcm_crc_errors,queue_overflow:h.rtcm_queue_overflow,sequence_gaps:h.rtcm_sequence_gaps,acks_sent:h.ack_queued,ack_send_fail:h.ack_send_fail},
       downstream:{paired:h.child_provisioned,mac:h.child_mac,pairing_active:h.child_pairing_active,frames_queued:h.relay_frames_queued,frames_sent:h.relay_frames_sent,frames_acked:h.relay_frames_acked,fragments_sent:h.relay_fragments_sent,frame_retries:h.relay_retries,ack_timeouts:h.relay_ack_timeouts,queue_depth:h.relay_queue_depth,queue_overflow:h.relay_queue_overflow,send_failures:h.relay_send_failures,send_immediate_errors:h.relay_send_immediate_errors,send_callback_timeouts:h.relay_send_callback_timeouts,send_delivery_failures:h.relay_send_delivery_failures,backoff_events:h.relay_backoff_events,frames_without_child:h.relay_frames_without_child,frames_suppressed_pairing:h.relay_frames_suppressed_pairing,last_ack_age_ms:h.relay_last_ack_age_ms}
     });

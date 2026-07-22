@@ -960,6 +960,7 @@ bool relayProcessNextLlh(TickType_t waitTicks) {
     forwarded.latitudeE7 = childPacket.latitudeE7;
     forwarded.longitudeE7 = childPacket.longitudeE7;
     forwarded.heightMm = childPacket.heightMm;
+    forwarded.fixQuality = childPacket.fixQuality;
     if (!rtcm_espnow::validateRelayedRoverLlhStatus(forwarded, sizeof(forwarded))) {
         incrementStat(&RelayStats::childLlhForwardFailures);
         portENTER_CRITICAL(&relayMux);
@@ -1003,9 +1004,10 @@ bool relayProcessNextLlh(TickType_t waitTicks) {
         ++childPeers[selectedIndex].llhForwarded;
     }
     portEXIT_CRITICAL(&relayMux);
-    Serial.printf("[RELAY][LLH] Forwarded child=%s seq=%lu\n",
+    Serial.printf("[RELAY][LLH] Forwarded child=%s seq=%lu fix_quality=%u\n",
                   macToString(sourceChildMac).c_str(),
-                  static_cast<unsigned long>(forwarded.sequence));
+                  static_cast<unsigned long>(forwarded.sequence),
+                  static_cast<unsigned>(forwarded.fixQuality));
     return true;
 }
 

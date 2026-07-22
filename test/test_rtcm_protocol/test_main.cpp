@@ -62,13 +62,17 @@ void test_rover_llh_status_validation() {
     status.latitudeE7 = 210734567;
     status.longitudeE7 = 1058123456;
     status.heightMm = 12345;
+    status.fixQuality = 4;
 
-    TEST_ASSERT_EQUAL_UINT32(20, sizeof(RoverLlhStatusPacket));
+    TEST_ASSERT_EQUAL_UINT32(21, sizeof(RoverLlhStatusPacket));
     TEST_ASSERT_TRUE(validateRoverLlhStatus(status, sizeof(status)));
     status.latitudeE7 = 900000001;
     TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
     status.latitudeE7 = 210734567;
     status.common.packetType = PACKET_TYPE_FRAME_ACK;
+    TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
+    status.common.packetType = PACKET_TYPE_ROVER_LLH_STATUS;
+    status.fixQuality = 9;
     TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
 }
 
@@ -83,10 +87,14 @@ void test_relayed_rover_llh_status_validation() {
     status.latitudeE7 = 210734567;
     status.longitudeE7 = 1058123456;
     status.heightMm = 12345;
+    status.fixQuality = 5;
 
     TEST_ASSERT_EQUAL_UINT32(28, sizeof(RelayedRoverLlhStatusPacket));
     TEST_ASSERT_TRUE(validateRelayedRoverLlhStatus(status, sizeof(status)));
     std::memset(status.roverMac, 0, sizeof(status.roverMac));
+    TEST_ASSERT_FALSE(validateRelayedRoverLlhStatus(status, sizeof(status)));
+    std::memcpy(status.roverMac, roverMac, sizeof(roverMac));
+    status.fixQuality = 9;
     TEST_ASSERT_FALSE(validateRelayedRoverLlhStatus(status, sizeof(status)));
 }
 

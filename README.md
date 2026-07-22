@@ -51,7 +51,7 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 
 ### Telemetry Rover → Base trực tiếp và qua Relay
 
-Rover thường gửi trạng thái GNSS trực tiếp về peer đã pair. Nếu peer đó là Relay, Relay giữ nguyên sequence/LLH, thêm MAC Rover con và chuyển tiếp về Base.
+Rover thường gửi trạng thái GNSS trực tiếp về peer đã pair. Nếu peer đó là Relay, Relay giữ nguyên sequence/LLH/fix quality, thêm MAC Rover con và chuyển tiếp về Base.
 
 Relay đồng thời gửi LLH local của chính nó trực tiếp về Base bằng type `6`. Vì vậy Base/MQTT có hai snapshot độc lập: một theo MAC Relay (`via_relay=false`) và một theo MAC Rover con (`via_relay=true`).
 
@@ -62,24 +62,24 @@ UM980/982 Rover ── GGA ──> ESP32 Rover
                               ▼
 ESP32 Base ── latest state trong RAM
 
-Child Rover ── ROVER_LLH_STATUS · 20 byte ──> Relay
+Child Rover ── ROVER_LLH_STATUS · 21 byte ──> Relay
 Relay ── RELAYED_ROVER_LLH_STATUS · 28 byte ──> Base
 ```
 
 Nguyên tắc hiện tại:
 
-1. Packet trực tiếp `ROVER_LLH_STATUS` (type `6`, 20 byte); packet chuyển tiếp `RELAYED_ROVER_LLH_STATUS` (type `7`, 28 byte) thêm MAC Rover con.
+1. Packet trực tiếp `ROVER_LLH_STATUS` (type `6`, 21 byte); packet chuyển tiếp `RELAYED_ROVER_LLH_STATUS` (type `7`, 28 byte) thêm MAC Rover con. Cả hai mang thêm `fixQuality` 1 byte lấy nguyên trạng từ trường quality của GGA (`4 = RTK Fixed`, `5 = RTK Float`).
 2. Rover gửi tối đa 1 packet mỗi giây tới đúng `base_mac` đã pair. Telemetry có ưu tiên thấp hơn pairing và RTCM ACK; nếu TX manager đang bận thì có thể bỏ lần gửi hiện tại, không retry vì packet kế tiếp sẽ thay thế sau một giây.
-3. Packet dùng fixed-point `int32_t`: latitude/longitude nhân `10^7`, height đổi từ mét sang millimetre. Base chia lại theo cùng hệ số khi sử dụng. `height` hiện là altitude MSL ở trường 9 của GGA.
+3. Packet dùng fixed-point `int32_t`: latitude/longitude nhân `10^7`, height đổi từ mét sang millimetre; `fixQuality` dùng `uint8_t` và chấp nhận giá trị GGA `0...8`. Base chia lại theo cùng hệ số khi sử dụng. `height` hiện là altitude MSL ở trường 9 của GGA.
 4. Rover con chỉ cần pair với Relay và vẫn chạy firmware Normal. Relay gửi LLH local của nó về Base, đồng thời chỉ nhận LLH downstream từ MAC thuộc danh sách đã pair. Mỗi Rover con có một slot LLH latest-only riêng; trạng thái mới ghi đè trạng thái cũ của chính Rover đó khi RTCM đang bận, và task forward chọn các slot theo round-robin.
 5. Callback ESP-NOW phía Base chỉ kiểm tra source MAC/length/magic/version rồi copy packet vào một slot RAM tương ứng Rover; không tạo JSON, gọi MQTT hoặc ghi flash trong callback Wi-Fi.
 6. Base giữ đúng một bản ghi mới nhất cho mỗi Rover trong RAM và packet mới ghi đè packet cũ. Trạng thái này không được ghi NVS/flash. Khi Base restart, RAM bị xóa nhưng Rover sẽ gửi lại trong tối đa một giây.
 7. NVS của Base tiếp tục chỉ lưu dữ liệu provisioning cần tồn tại qua restart như danh sách MAC Rover đã pair; không dùng NVS để lưu lịch sử LLH 1 Hz.
 8. Base xác định Rover trực tiếp bằng source MAC; với packet chuyển tiếp, Base xác thực source MAC Relay đã pair rồi dùng MAC Rover con trong packet làm danh tính nguồn.
-9. MQTT giữ topic theo MAC Rover con và thêm `via_relay`, `relay_mac` vào JSON. LLH vẫn chỉ giữ latest snapshot trong RAM, không ghi flash.
+9. MQTT giữ topic theo MAC Rover con và thêm `fix_quality`, `via_relay`, `relay_mac` vào JSON. LLH vẫn chỉ giữ latest snapshot trong RAM, không ghi flash.
 10. Health Relay có các bộ đếm `child_llh_received`, `child_llh_forwarded`, `child_llh_forward_skipped`, `child_llh_forward_failures`; Base có `llh_relayed` và `llh_capacity_drop`.
 
-Với packet 20 byte ở 1 Hz, ngay cả năm Rover cũng chỉ tạo tải payload 800 bps trước overhead, nhỏ so với PHY LR 250 Kbps. Mục tiêu vẫn là bảo vệ RTCM: pairing và ACK luôn có ưu tiên cao hơn telemetry.
+Với packet 21 byte ở 1 Hz, ngay cả năm Rover cũng chỉ tạo tải payload 840 bps trước overhead, nhỏ so với PHY LR 250 Kbps. Mục tiêu vẫn là bảo vệ RTCM: pairing và ACK luôn có ưu tiên cao hơn telemetry. Thay đổi kích thước type `6` không tương thích với firmware LLH cũ, vì vậy Base, Relay và Rover phải được cập nhật cùng phiên bản.
 
 Luồng khởi tạo:
 
@@ -361,7 +361,11 @@ Task `GNSS Command` khóa `gnssTxMutex` và ghi 14 bước xuống `Serial1`/UM9
 14 saveconfig
 ```
 
-Sau mỗi bước Rover cập nhật `completed_step`; sau bước cuối gửi packet result type `9` về Base. Request lặp với cùng source MAC, transaction ID và command ID chỉ gửi lại result gần nhất, không chạy lại chuỗi. Nếu chuyển sang Base thành công, Rover ngừng nhận RTCM correction, ngừng gửi LLH kiểu Rover và bỏ qua luồng COM2 nhị phân trong parser NMEA cho tới khi nhận `switch_to_rover` thành công hoặc reset.
+Sau mỗi bước Rover cập nhật `completed_step`; sau bước cuối gửi packet result type `9` về Base. Request lặp với cùng source MAC, transaction ID và command ID chỉ gửi lại result gần nhất, không chạy lại chuỗi. Nếu chuyển sang Base thành công, Rover ngừng nhận RTCM correction và ngừng gửi LLH kiểu Rover; COM2 chuyển từ parser NMEA sang parser RTCM uplink cho tới khi nhận `switch_to_rover` thành công hoặc reset.
+
+Temporary Base không phát RTCM trực tiếp tới Rover khác. Firmware tách RTCM3 từ luồng COM2, kiểm preamble/length/CRC24Q rồi đưa frame vào queue 3 phần tử ưu tiên dữ liệu mới. Mỗi frame được chia payload tối đa 234 byte và unicast về đúng `base_mac` đã pair bằng packet type `10 = TEMP_RTCM_DATA`; Base trả type `11 = TEMP_RTCM_ACK` theo `streamId + frameSequence`. Uplink retry fragment tối đa 3 attempt và retry nguyên frame một lần. ACK hop này độc lập với ACK correction thông thường từ Rover về Base.
+
+Khi Base gốc đang ở `TEMP_PREPARING`, correction local vẫn phục vụ các Rover khác. Base chỉ chuyển `TEMP_ACTIVE` sau thời gian survey và hai chu kỳ đủ `1006/1074/1084/1094/1124`; Temporary Base vẫn không cần route map. Khi uplink mất ACK hoặc queue nghẽn, counter `[TEMP_BASE][UPLINK][HEALTH]` cho biết `dropped`, `queue_overflow`, `fragment_fail`, `ack_timeout`.
 
 Action `switch_to_rover` ghi 4 bước để hoàn nguyên:
 
@@ -374,7 +378,7 @@ Action `switch_to_rover` ghi 4 bước để hoàn nguyên:
 
 Sau khi ghi thành công, Rover hạ cờ `promoted_to_base`, mở lại parser NMEA/LLH và trả result `4/4`; Base nhận result rồi bật lại gửi RTCM. Cú pháp này yêu cầu UM980 Build7923+ hoặc UM982 Build7650+ theo Commands Manual N4 của Unicore.
 
-Giới hạn V1: `uart_sequence_written` chỉ xác nhận ESP32 đã ghi đủ byte xuống UART, chưa parse phản hồi `OK/ERROR` của UM980 và chưa xác nhận survey-in hoàn tất. ESP32 vẫn chạy firmware Rover, chưa tự chuyển sang pipeline Base phát RTCM. Trạng thái đổi vai trò chỉ nằm trong RAM; reset sẽ trở về Rover. Lệnh không dùng `FRESET`.
+Giới hạn V1: `uart_sequence_written` chỉ xác nhận ESP32 đã ghi đủ byte xuống UART, chưa parse phản hồi `OK/ERROR` của UM980 và chưa xác nhận survey-in hoàn tất. Việc xác nhận nguồn sẵn sàng do Base gốc thực hiện từ thời gian survey và tập message RTCM nhận được. Trạng thái đổi vai trò chỉ nằm trong RAM; reset sẽ trở về Rover. Lệnh không dùng `FRESET`.
 
 ### Debug web SoftAP tùy chọn
 
@@ -409,7 +413,7 @@ SoftAP dùng cùng `ESPNOW_WIFI_CHANNEL` với ESP-NOW để tránh đổi chann
 SoftAP luôn được khởi động sau khi Wi-Fi mode/channel, ESP-NOW LR rate và các peer đã được cấu hình. Đây là cùng thứ tự dùng ở luồng pairing ổn định ban đầu; SoftAP không chen giữa bước khởi tạo core và bước đăng ký peer.
 
 - `lat`, `lon`, `height_m`
-- `rtk_status` là số GGA fix quality, ví dụ `4` hoặc `5`
+- `fix_quality` là số GGA fix quality, ví dụ `4` hoặc `5`
 - `satellites`
 - `last_gga_age_ms`
 
@@ -725,8 +729,18 @@ Kiểm tra thêm với Relay mode:
 19. [ ] Kiểm thử mất nguồn/mất sóng lần lượt từng Rover con để xác nhận upstream và các child còn lại vẫn hoạt động, cooldown/health downstream báo đúng.
 20. [x] Triển khai V1 nhận lệnh ESP-NOW từ Base để cấu hình UM980 thành Base survey-in qua COM2 và trả application result.
 21. [x] Thêm action `switch_to_rover` với chuỗi 4 lệnh COM2 và đồng bộ bật lại RTCM/LLH sau application result.
+22. [x] Triển khai Temporary Base parser RTCM trên COM2, queue/retry/ACK uplink một hop về Base gốc; không phát correction trực tiếp tới Rover khác.
 
 ## Kết quả kiểm tra phần mềm gần nhất
+
+### Cập nhật 2026-07-22
+
+- Đã triển khai `TemporaryBaseUplink`: khi `promoted_to_base`, COM2 được parse RTCM3 nhị phân, CRC đúng mới vào queue; packet type `10/11`, stream/sequence, fragment retry và application ACK độc lập với correction downstream.
+- Đã nối cờ vai trò với uplink: chuyển sang Base tạo stream mới và dừng LLH/RTCM input vai trò Rover; `switch_to_rover` tắt uplink, xóa queue/parser và mở lại NMEA/LLH.
+- Health Serial thêm `[TEMP_BASE][UPLINK][HEALTH]` với byte UART, frame parse/CRC, queue overflow, sent/drop, fragment failure, retry và ACK timeout.
+- Build xác nhận: Normal SUCCESS, RAM 47.712 byte (14,6%), Flash 797.653 byte (60,9%); Relay SUCCESS, RAM 48.360 byte (14,8%), Flash 819.117 byte (62,5%); native protocol test **8/8 PASSED**. Chưa kiểm thử handover trên phần cứng trong lượt này.
+- Packet LLH type `6` đã thêm `fixQuality` từ GGA và tăng từ 20 lên 21 byte; packet Relay type `7` giữ 28 byte bằng cách dùng một byte reserved. Relay chuyển tiếp nguyên trạng và Base publish `fix_quality` dạng số lên MQTT.
+- Mốc build trước khi thêm uplink: Normal SUCCESS, RAM 46.592 byte (14,2%), Flash 795.173 byte (60,7%); Relay SUCCESS, RAM 47.240 byte (14,4%), Flash 816.541 byte (62,3%); native protocol test **8/8 PASSED**.
 
 ### Cập nhật 2026-07-21
 
@@ -736,12 +750,12 @@ Kiểm tra thêm với Relay mode:
 - Build xác nhận sau khi thêm hai chiều: Normal `esp32u_rover_espnow` SUCCESS, RAM 46.592/327.680 byte (14,2%), Flash 794.905/1.310.720 byte (60,6%); Relay `esp32u_rover_relay` SUCCESS, RAM 47.232 byte (14,4%), Flash 816.241 byte (62,3%). Native protocol test **8/8 PASSED**, gồm cả command ID về Rover, tham số và auth tamper.
 - Đã thêm command ID `2` để chuyển temporary Base về `mode rover survey`, bật lại nhận RTCM/gửi LLH trong RAM và trả result 4 bước về Base.
 
-- Lần kiểm tra phần mềm gần nhất: 2026-07-17.
+- Lần kiểm tra phần mềm gần nhất: 2026-07-22, sau khi thêm Temporary Base uplink.
 - PlatformIO Core: **6.1.19** tại `C:\Users\admin\.platformio\penv\Scripts\pio.exe`.
-- PlatformIO `esp32u_rover_espnow`: **SUCCESS**, RAM 46,520/327,680 byte (14.2%), Flash 791,665/1,310,720 byte (60.4%) ở Normal mode.
-- PlatformIO `esp32u_rover_relay`: **SUCCESS**, RAM 47,160/327,680 byte (14.4%), Flash 813,053/1,310,720 byte (62.0%) ở Relay mode.
-- Native unit test: **7/7 PASSED**.
-- Artifact ngày 2026-07-17: Normal `firmware.bin` 798,240 byte; Relay `firmware.bin` 819,632 byte.
+- PlatformIO `esp32u_rover_espnow`: **SUCCESS**, RAM 47,712/327,680 byte (14.6%), Flash 797,653/1,310,720 byte (60.9%) ở Normal mode.
+- PlatformIO `esp32u_rover_relay`: **SUCCESS**, RAM 48,360/327,680 byte (14.8%), Flash 819,117/1,310,720 byte (62.5%) ở Relay mode.
+- Native unit test: **8/8 PASSED**.
+- Artifact ngày 2026-07-22: Normal `firmware.bin` 801,744 byte; Relay `firmware.bin` 823,120 byte.
 - MAC Base hard-code đã được loại bỏ; cần pair Base/Rover để có MAC trong NVS trước khi chạy RTCM runtime.
 - Tối ưu ngày 2026-07-06 đã đồng bộ timeout 1500 ms với deadline Base, thêm ACK ứng dụng/chống ghi trùng, UART TX buffer 2048 byte và telemetry đầy đủ. Vẫn cần test state machine và kiểm thử RTK end-to-end trên phần cứng.
 - Rà soát ngày 2026-07-07: `pio` chưa có trong PATH của shell hiện tại, nhưng chạy trực tiếp bằng đường dẫn trong `.platformio\penv\Scripts` thành công.

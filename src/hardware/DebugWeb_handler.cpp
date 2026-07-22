@@ -25,11 +25,11 @@ const char NORMAL_INDEX_HTML[] PROGMEM = R"HTML(
 <title>ESP32 Rover Debug</title><style>
 :root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#1c2526;background:#f5f7f8}body{margin:0;padding:20px}main{max-width:780px;margin:auto}h1{margin:0}.sub{color:#607074}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.card,table{background:#fff;border:1px solid #d9e1e3;border-radius:8px}.card{padding:14px}.label{font-size:12px;color:#68787c;text-transform:uppercase}.value{font-size:24px;font-weight:700;margin-top:6px}.health{margin-top:16px}table{width:100%;border-collapse:collapse;overflow:hidden}td{padding:10px 12px;border-bottom:1px solid #edf1f2}td:last-child{text-align:right;font-weight:600}.ok{color:#087f5b}.warn{color:#b35c00}.bad{color:#c92a2a}
 </style></head><body><main><h1>ESP32 Rover Debug</h1><p class="sub">Normal mode · 192.168.4.1</p>
-<section class="grid"><div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div><div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div><div class="card"><div class="label">Height</div><div id="height" class="value">--</div></div><div class="card"><div class="label">RTK status</div><div id="rtk" class="value">--</div></div><div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div></section>
+<section class="grid"><div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div><div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div><div class="card"><div class="label">Height</div><div id="height" class="value">--</div></div><div class="card"><div class="label">Fix quality</div><div id="fix" class="value">--</div></div><div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div></section>
 <section class="health"><table><tbody id="health"></tbody></table></section></main><script>
 const fields=["espnow_ready","base_provisioned","pairing_active","pair_confirm_ok","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
 const text=v=>v===null||v===undefined?"--":v;
-async function refresh(){try{const d=await(await fetch('/api/status',{cache:'no-store'})).json();lat.textContent=d.gga.valid?d.gga.lat.toFixed(7):'--';lon.textContent=d.gga.valid?d.gga.lon.toFixed(7):'--';height.textContent=d.gga.valid?d.gga.height_m.toFixed(3)+' m':'--';rtk.textContent=d.gga.valid?d.gga.fix_quality:'--';rtk.className='value '+(d.gga.fix_quality===4?'ok':d.gga.fix_quality===5?'warn':'bad');sats.textContent=d.gga.valid?d.gga.satellites:'--';health.innerHTML=fields.map(k=>`<tr><td>${k}</td><td>${text(d.health[k])}</td></tr>`).join('')}catch(e){health.innerHTML='<tr><td>status</td><td>offline</td></tr>'}}refresh();setInterval(refresh,1000);
+async function refresh(){try{const d=await(await fetch('/api/status',{cache:'no-store'})).json();lat.textContent=d.gga.valid?d.gga.lat.toFixed(7):'--';lon.textContent=d.gga.valid?d.gga.lon.toFixed(7):'--';height.textContent=d.gga.valid?d.gga.height_m.toFixed(3)+' m':'--';fix.textContent=d.gga.valid?d.gga.fix_quality:'--';fix.className='value '+(d.gga.fix_quality===4?'ok':d.gga.fix_quality===5?'warn':'bad');sats.textContent=d.gga.valid?d.gga.satellites:'--';health.innerHTML=fields.map(k=>`<tr><td>${k}</td><td>${text(d.health[k])}</td></tr>`).join('')}catch(e){health.innerHTML='<tr><td>status</td><td>offline</td></tr>'}}refresh();setInterval(refresh,1000);
 </script></body></html>)HTML";
 
 const char RELAY_INDEX_HTML[] PROGMEM = R"HTML(
@@ -37,12 +37,12 @@ const char RELAY_INDEX_HTML[] PROGMEM = R"HTML(
 <title>ESP32 Rover Relay</title><style>
 :root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#172126;background:#eef3f4}body{margin:0;padding:20px}main{max-width:960px;margin:auto}h1{margin:0}.sub{color:#607074}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-top:18px}.card,table{background:#fff;border:1px solid #d4dfe1;border-radius:8px}.card{padding:14px}.label{font-size:12px;color:#68787c;text-transform:uppercase}.value{font-size:22px;font-weight:700;margin-top:6px;word-break:break-word}.columns{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}h2{font-size:17px;margin:0 0 8px}table{width:100%;border-collapse:collapse;overflow:hidden}td{padding:9px 11px;border-bottom:1px solid #edf1f2}td:last-child{text-align:right;font-weight:600}.ok{color:#087f5b}.warn{color:#b35c00}.bad{color:#c92a2a}@media(max-width:700px){.columns{grid-template-columns:1fr}}
 </style></head><body><main><h1>ESP32 Rover Relay</h1><p class="sub">Relay mode · 192.168.4.1</p>
-<section class="grid"><div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div><div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div><div class="card"><div class="label">Height</div><div id="height" class="value">--</div></div><div class="card"><div class="label">RTK status</div><div id="rtk" class="value">--</div></div><div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div></section>
+<section class="grid"><div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div><div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div><div class="card"><div class="label">Height</div><div id="height" class="value">--</div></div><div class="card"><div class="label">Fix quality</div><div id="fix" class="value">--</div></div><div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div></section>
 <div class="columns"><section><h2>Upstream · Base → Relay</h2><table><tbody id="upstream"></tbody></table></section><section><h2>Downstream · Relay → Child</h2><table><tbody id="downstream"></tbody></table></section></div></main><script>
 const up=["paired","mac","pairing_active","frames_received","crc_errors","queue_overflow","acks_sent","last_rtcm_age_ms"];
 const down=["paired","mac","pairing_active","frames_queued","frames_sent","frames_acked","fragments_sent","frame_retries","ack_timeouts","send_failures","send_immediate_errors","send_callback_timeouts","send_delivery_failures","backoff_events","frames_without_child","frames_suppressed_pairing","last_ack_age_ms"];
 const text=v=>v===null||v===undefined||v===''?'--':v;const rows=(o,keys)=>keys.map(k=>`<tr><td>${k}</td><td>${text(o[k])}</td></tr>`).join('');
-async function refresh(){try{const d=await(await fetch('/api/relay/status',{cache:'no-store'})).json();lat.textContent=d.device.gga_valid?d.device.lat.toFixed(7):'--';lon.textContent=d.device.gga_valid?d.device.lon.toFixed(7):'--';height.textContent=d.device.gga_valid?d.device.height_m.toFixed(3)+' m':'--';rtk.textContent=d.device.gga_valid?d.device.fix_quality:'--';rtk.className='value '+(d.device.fix_quality===4?'ok':d.device.fix_quality===5?'warn':'bad');sats.textContent=d.device.gga_valid?d.device.satellites:'--';upstream.innerHTML=rows(d.upstream,up);downstream.innerHTML=rows(d.downstream,down)}catch(e){upstream.innerHTML='<tr><td>status</td><td>offline</td></tr>';downstream.innerHTML=''}}refresh();setInterval(refresh,1000);
+async function refresh(){try{const d=await(await fetch('/api/relay/status',{cache:'no-store'})).json();lat.textContent=d.device.gga_valid?d.device.lat.toFixed(7):'--';lon.textContent=d.device.gga_valid?d.device.lon.toFixed(7):'--';height.textContent=d.device.gga_valid?d.device.height_m.toFixed(3)+' m':'--';fix.textContent=d.device.gga_valid?d.device.fix_quality:'--';fix.className='value '+(d.device.fix_quality===4?'ok':d.device.fix_quality===5?'warn':'bad');sats.textContent=d.device.gga_valid?d.device.satellites:'--';upstream.innerHTML=rows(d.upstream,up);downstream.innerHTML=rows(d.downstream,down)}catch(e){upstream.innerHTML='<tr><td>status</td><td>offline</td></tr>';downstream.innerHTML=''}}refresh();setInterval(refresh,1000);
 </script></body></html>)HTML";
 
 String macText(const uint8_t mac[6], bool valid) {
@@ -55,16 +55,6 @@ String macText(const uint8_t mac[6], bool valid) {
     return String(value);
 }
 
-const char* fixQualityToText(uint8_t fixQuality) {
-    switch (fixQuality) {
-        case 1: return "GPS Fix";
-        case 2: return "DGPS";
-        case 4: return "RTK Fixed";
-        case 5: return "RTK Float";
-        default: return "Invalid";
-    }
-}
-
 void appendGga(String& payload, const GgaDebugSnapshot& gga, uint32_t now) {
     payload += "\"valid\":";
     payload += gga.valid ? "true" : "false";
@@ -72,7 +62,6 @@ void appendGga(String& payload, const GgaDebugSnapshot& gga, uint32_t now) {
     payload += ",\"lon\":" + String(gga.lon, 7);
     payload += ",\"height_m\":" + String(gga.heightM, 3);
     payload += ",\"fix_quality\":" + String(gga.fixQuality);
-    payload += ",\"rtk_status\":\"" + String(fixQualityToText(gga.fixQuality)) + "\"";
     payload += ",\"satellites\":" + String(gga.satellites);
     payload += ",\"last_gga_age_ms\":";
     payload += gga.valid ? String(now - gga.lastUpdateMs) : "null";
@@ -135,7 +124,6 @@ void handleRelayStatus() {
     payload += ",\"lon\":" + String(gga.lon, 7);
     payload += ",\"height_m\":" + String(gga.heightM, 3);
     payload += ",\"fix_quality\":" + String(gga.fixQuality);
-    payload += ",\"rtk_status\":\"" + String(fixQualityToText(gga.fixQuality)) + "\"";
     payload += ",\"satellites\":" + String(gga.satellites);
     payload += ",\"uptime_s\":" + String(now / 1000U);
     payload += "},\"upstream\":{";

@@ -1,6 +1,7 @@
 #include "helper.h"
 #include "hardware/DebugWeb_handler.h"
 #include "hardware/Relay_handler.h"
+#include "hardware/TemporaryBaseUplink.h"
 
 extern PubSubClient mqtt;
 
@@ -105,6 +106,12 @@ void setup() {
             delay(1000);
         }
     }
+    if (!temporaryBaseUplinkSetup()) {
+        Serial.println("[SETUP][FATAL] Temporary Base uplink init failed");
+        while (true) {
+            delay(1000);
+        }
+    }
     if constexpr (DEBUG_WEB_ENABLED) {
         if (espnowIsReady() && !debugWebSetup()) {
             Serial.println("[SETUP][WARN] Debug web chua hoat dong");
@@ -125,6 +132,7 @@ void setup() {
     createRequiredTask(healthCheckTask, "Health", 4096, 1, 1);
     createRequiredTask(roverLlhStatusTask, "LLH Status", 3072, 1, 1);
     createRequiredTask(gnssCommandTask, "GNSS Command", 4096, 2, 1);
+    createRequiredTask(temporaryBaseUplinkTask, "Temp RTCM TX", 6144, 4, 1);
     if constexpr (ROVER_RELAY_MODE) {
         createRequiredTask(relaySendTask, "RTCM Relay", 4096, 3, 1);
     }
@@ -152,10 +160,13 @@ void gnssParseTask(void* parameter) {
     while (true) {
         if (!gnssCommandAcceptsRtcmCorrection()) {
             while (Serial1.available()) {
-                Serial1.read();
+                const int value = Serial1.read();
+                if (value >= 0) {
+                    temporaryBaseUplinkConsumeGnssByte(static_cast<uint8_t>(value));
+                }
             }
             currentLine = "";
-            vTaskDelay(pdMS_TO_TICKS(20));
+            vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
         while (Serial1.available()) {
@@ -216,6 +227,7 @@ void healthCheckTask(void* parameter) {
             Serial.print("[HEALTH] ");
             Serial.println(payload);
             const GnssCommandStats command = gnssCommandGetStats();
+            const TemporaryBaseUplinkStats uplink = temporaryBaseUplinkGetStats();
             Serial.printf(
                 "[ROVER][GNSS_CMD][HEALTH] rx=%lu invalid=%lu queue_overflow=%lu "
                 "duplicate=%lu completed=%lu result_sent=%lu result_fail=%lu "
@@ -229,6 +241,25 @@ void healthCheckTask(void* parameter) {
                 static_cast<unsigned long>(command.resultSendFailures),
                 static_cast<unsigned long>(command.uartWriteFailures),
                 command.promotedToBase ? 1U : 0U);
+            Serial.printf(
+                "[TEMP_BASE][UPLINK][HEALTH] enabled=%u uart_bytes=%lu parsed=%lu "
+                "crc_error=%lu queue_overflow=%lu sent=%lu dropped=%lu fragments=%lu "
+                "fragment_fail=%lu retry=%lu ack=%lu ack_timeout=%lu last_send_age_ms=%lu\n",
+                uplink.enabled ? 1U : 0U,
+                static_cast<unsigned long>(uplink.uartBytes),
+                static_cast<unsigned long>(uplink.framesParsed),
+                static_cast<unsigned long>(uplink.crcErrors),
+                static_cast<unsigned long>(uplink.queueOverflow),
+                static_cast<unsigned long>(uplink.framesSent),
+                static_cast<unsigned long>(uplink.framesDropped),
+                static_cast<unsigned long>(uplink.fragmentsSent),
+                static_cast<unsigned long>(uplink.fragmentFailures),
+                static_cast<unsigned long>(uplink.frameRetries),
+                static_cast<unsigned long>(uplink.ackReceived),
+                static_cast<unsigned long>(uplink.ackTimeouts),
+                static_cast<unsigned long>(uplink.lastFrameSentAtMs == 0
+                                               ? UINT32_MAX
+                                               : now - uplink.lastFrameSentAtMs));
             if constexpr (MQTT_PUBLISH_HEALTH_ENABLED) {
                 if (xSemaphoreTake(mqttClientMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
                     if (mqtt.connected()) {
@@ -264,7 +295,8 @@ void roverLlhStatusTask(void* parameter) {
         if (!gga.valid || now - gga.lastUpdateMs > ROVER_LLH_MAX_GGA_AGE_MS) {
             continue;
         }
-        espnowTrySendRoverLlhStatus(gga.lat, gga.lon, gga.heightM);
+        espnowTrySendRoverLlhStatus(
+            gga.lat, gga.lon, gga.heightM, gga.fixQuality);
     }
 }
 

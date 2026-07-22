@@ -91,6 +91,14 @@ inline constexpr bool ESPNOW_USE_LR_250KBPS = true; // true=250 Kbps, false=500 
 inline constexpr uint32_t ESPNOW_TX_MUTEX_TIMEOUT_MS = 500;
 inline constexpr uint32_t ESPNOW_TX_CALLBACK_TIMEOUT_MS = 300;
 
+// Temporary Base sends validated RTCM only to its paired original Base.
+inline constexpr std::size_t TEMP_BASE_UPLINK_QUEUE_LENGTH = 3;
+inline constexpr uint32_t TEMP_BASE_UPLINK_ACK_TIMEOUT_MS = 300;
+inline constexpr uint32_t TEMP_BASE_UPLINK_FRAME_DEADLINE_MS = 1000;
+inline constexpr uint8_t TEMP_BASE_UPLINK_FRAME_RETRY_COUNT = 1;
+inline constexpr uint8_t TEMP_BASE_UPLINK_FRAGMENT_RETRY_COUNT = 2;
+inline constexpr uint32_t TEMP_BASE_UPLINK_FRAGMENT_GAP_MS = 5;
+
 // ================= ESP-NOW PAIRING =================
 inline constexpr bool ESPNOW_PAIRING_ENABLED = true;
 inline constexpr int PAIRING_BUTTON_PIN = 0; // BOOT on many ESP32 boards; change to PCB pairing button.

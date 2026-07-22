@@ -5,7 +5,7 @@ typedef struct {
   double lat;
   double lon;
   double height_m;
-  String rtk_status;
+  String fix_quality;
   String satellites;
 } gga_data_struct;
 

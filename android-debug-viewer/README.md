@@ -7,7 +7,7 @@
 - Tự phát hiện CP210x, CH340/CH341, FTDI, PL2303 và USB CDC gốc của ESP32.
 - Mở serial ở `115200 8N1`.
 - Hiển thị toàn bộ log, lọc log, tự cuộn và đánh màu cảnh báo/lỗi.
-- Hiển thị Latitude, Longitude, Height, RTK status và số vệ tinh từ GGA.
+- Hiển thị Latitude, Longitude, Height, Fix quality và số vệ tinh từ GGA.
 - Hiển thị đúng nhóm RTCM của Web Debug: liên kết Base → Rover/Relay và, trong Relay mode, Relay → Rover con.
 - Đọc telemetry `[DEBUG_STATUS]` mỗi giây; terminal thô được thu gọn ở cuối màn hình.
 - Hoạt động hoàn toàn offline; không cần Wi-Fi và không yêu cầu quyền Internet.

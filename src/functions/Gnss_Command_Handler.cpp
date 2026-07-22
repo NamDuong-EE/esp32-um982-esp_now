@@ -6,6 +6,7 @@
 
 #include "Prog_Config.h"
 #include "hardware/Espnow_tx_manager.h"
+#include "hardware/TemporaryBaseUplink.h"
 #include "protocol/RtcmEspNowProtocol.h"
 
 extern SemaphoreHandle_t gnssTxMutex;
@@ -42,6 +43,7 @@ void setPromotedToBase(bool promoted)
     portENTER_CRITICAL(&statsMux);
     stats.promotedToBase = promoted;
     portEXIT_CRITICAL(&statsMux);
+    temporaryBaseUplinkSetEnabled(promoted);
 }
 
 bool macEquals(const uint8_t* left, const uint8_t* right)

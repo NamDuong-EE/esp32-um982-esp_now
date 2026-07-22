@@ -66,7 +66,8 @@ bool validateRoverLlhStatus(const RoverLlhStatusPacket& packet,
            packet.common.version == VERSION &&
            packet.common.packetType == PACKET_TYPE_ROVER_LLH_STATUS &&
            packet.latitudeE7 >= -900000000 && packet.latitudeE7 <= 900000000 &&
-           packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000;
+           packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000 &&
+           packet.fixQuality <= 8;
 }
 
 bool validateRelayedRoverLlhStatus(const RelayedRoverLlhStatusPacket& packet,
@@ -83,7 +84,8 @@ bool validateRelayedRoverLlhStatus(const RelayedRoverLlhStatusPacket& packet,
            packet.common.packetType == PACKET_TYPE_RELAYED_ROVER_LLH_STATUS &&
            macConfigured && !macBroadcast && (packet.roverMac[0] & 0x01U) == 0 &&
            packet.latitudeE7 >= -900000000 && packet.latitudeE7 <= 900000000 &&
-           packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000;
+           packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000 &&
+           packet.fixQuality <= 8;
 }
 
 bool validateGnssCommandRequest(const GnssCommandRequestPacket& packet,
