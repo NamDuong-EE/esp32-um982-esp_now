@@ -61,6 +61,7 @@ void appendGga(String& payload, const GgaDebugSnapshot& gga, uint32_t now) {
     payload += ",\"lat\":" + String(gga.lat, 7);
     payload += ",\"lon\":" + String(gga.lon, 7);
     payload += ",\"height_m\":" + String(gga.heightM, 3);
+    payload += ",\"ellipsoid_height_m\":" + String(gga.ellipsoidHeightM, 3);
     payload += ",\"fix_quality\":" + String(gga.fixQuality);
     payload += ",\"satellites\":" + String(gga.satellites);
     payload += ",\"last_gga_age_ms\":";
@@ -123,6 +124,7 @@ void handleRelayStatus() {
     payload += ",\"lat\":" + String(gga.lat, 7);
     payload += ",\"lon\":" + String(gga.lon, 7);
     payload += ",\"height_m\":" + String(gga.heightM, 3);
+    payload += ",\"ellipsoid_height_m\":" + String(gga.ellipsoidHeightM, 3);
     payload += ",\"fix_quality\":" + String(gga.fixQuality);
     payload += ",\"satellites\":" + String(gga.satellites);
     payload += ",\"uptime_s\":" + String(now / 1000U);

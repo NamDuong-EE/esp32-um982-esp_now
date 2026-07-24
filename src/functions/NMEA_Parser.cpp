@@ -14,8 +14,10 @@ double nmeaToDecimal(String nmeaPos, String dir) {
 String parseGGA_toJSON(gga_data_struct ggaData) {
   char jsonPayload[128];
   snprintf(jsonPayload, sizeof(jsonPayload), 
-            "{\"lat\":%.7f,\"lon\":%.7f,\"height_m\":%.3f,\"fix_quality\":%s,\"satellites\":%s}",
+            "{\"lat\":%.7f,\"lon\":%.7f,\"height_m\":%.3f,"
+            "\"ellipsoid_height_m\":%.3f,\"fix_quality\":%s,\"satellites\":%s}",
             ggaData.lat, ggaData.lon, ggaData.height_m,
+            ggaData.height_m + ggaData.geoid_separation_m,
             ggaData.fix_quality.c_str(), ggaData.satellites.c_str());
             
   return String(jsonPayload);
@@ -39,14 +41,17 @@ boolean parseGGA_toStruct(String ggaMsg, gga_data_struct &ggaData) {
     String rtkStr = ggaMsg.substring(comma[5] + 1, comma[6]);
     String satStr = ggaMsg.substring(comma[6] + 1, comma[7]);
     String heightStr = ggaMsg.substring(comma[8] + 1, comma[9]);
+    String geoidSeparationStr = ggaMsg.substring(comma[10] + 1, comma[11]);
 
-    if (latStr.length() > 0 && lonStr.length() > 0) {
+    if (latStr.length() > 0 && lonStr.length() > 0 &&
+        geoidSeparationStr.length() > 0) {
       double latDD = nmeaToDecimal(latStr, latDir);
       double lonDD = nmeaToDecimal(lonStr, lonDir);
       
       ggaData.lat = latDD;
       ggaData.lon = lonDD;
       ggaData.height_m = heightStr.toDouble();
+      ggaData.geoid_separation_m = geoidSeparationStr.toDouble();
       ggaData.fix_quality = rtkStr;
       ggaData.satellites = satStr;
                

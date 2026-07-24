@@ -62,9 +62,10 @@ void test_rover_llh_status_validation() {
     status.latitudeE7 = 210734567;
     status.longitudeE7 = 1058123456;
     status.heightMm = 12345;
+    status.ellipsoidHeightMm = -15899;
     status.fixQuality = 4;
 
-    TEST_ASSERT_EQUAL_UINT32(21, sizeof(RoverLlhStatusPacket));
+    TEST_ASSERT_EQUAL_UINT32(25, sizeof(RoverLlhStatusPacket));
     TEST_ASSERT_TRUE(validateRoverLlhStatus(status, sizeof(status)));
     status.latitudeE7 = 900000001;
     TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
@@ -87,9 +88,10 @@ void test_relayed_rover_llh_status_validation() {
     status.latitudeE7 = 210734567;
     status.longitudeE7 = 1058123456;
     status.heightMm = 12345;
+    status.ellipsoidHeightMm = -15899;
     status.fixQuality = 5;
 
-    TEST_ASSERT_EQUAL_UINT32(28, sizeof(RelayedRoverLlhStatusPacket));
+    TEST_ASSERT_EQUAL_UINT32(32, sizeof(RelayedRoverLlhStatusPacket));
     TEST_ASSERT_TRUE(validateRelayedRoverLlhStatus(status, sizeof(status)));
     std::memset(status.roverMac, 0, sizeof(status.roverMac));
     TEST_ASSERT_FALSE(validateRelayedRoverLlhStatus(status, sizeof(status)));
@@ -165,30 +167,33 @@ void test_gnss_command_packet_validation() {
     request.common.packetType = PACKET_TYPE_GNSS_COMMAND_REQUEST;
     request.networkId = networkId;
     request.transactionId = 123;
-    request.surveyDurationSeconds = 60;
-    request.commandId = GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN;
+    request.commandId = GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF;
+    request.ecefXmm = -1620000000LL;
+    request.ecefYmm = 5730000000LL;
+    request.ecefZmm = 2260000000LL;
     request.targetPort = GNSS_PORT_COM2;
     request.authTag = pairingAuthTag(request, key.data(), key.size());
 
-    TEST_ASSERT_EQUAL_UINT32(24, sizeof(GnssCommandRequestPacket));
+    TEST_ASSERT_EQUAL_UINT32(44, sizeof(GnssCommandRequestPacket));
     TEST_ASSERT_TRUE(validateGnssCommandRequest(
         request, sizeof(request), networkId, key.data(), key.size()));
-    request.surveyDurationSeconds = GNSS_SURVEY_MIN_SECONDS - 1;
-    request.authTag = pairingAuthTag(request, key.data(), key.size());
-    TEST_ASSERT_FALSE(validateGnssCommandRequest(
-        request, sizeof(request), networkId, key.data(), key.size()));
-    request.surveyDurationSeconds = 60;
-    request.authTag = pairingAuthTag(request, key.data(), key.size());
     request.transactionId ^= 1U;
     TEST_ASSERT_FALSE(validateGnssCommandRequest(
         request, sizeof(request), networkId, key.data(), key.size()));
     request.transactionId = 123;
+    request.ecefXmm = 1000;
+    request.authTag = pairingAuthTag(request, key.data(), key.size());
+    TEST_ASSERT_FALSE(validateGnssCommandRequest(
+        request, sizeof(request), networkId, key.data(), key.size()));
+    request.transactionId = 123;
     request.commandId = GNSS_COMMAND_SWITCH_TO_ROVER;
-    request.surveyDurationSeconds = 0;
+    request.ecefXmm = 0;
+    request.ecefYmm = 0;
+    request.ecefZmm = 0;
     request.authTag = pairingAuthTag(request, key.data(), key.size());
     TEST_ASSERT_TRUE(validateGnssCommandRequest(
         request, sizeof(request), networkId, key.data(), key.size()));
-    request.surveyDurationSeconds = 60;
+    request.ecefXmm = 1000;
     request.authTag = pairingAuthTag(request, key.data(), key.size());
     TEST_ASSERT_FALSE(validateGnssCommandRequest(
         request, sizeof(request), networkId, key.data(), key.size()));
@@ -199,7 +204,7 @@ void test_gnss_command_packet_validation() {
     result.common.packetType = PACKET_TYPE_GNSS_COMMAND_RESULT;
     result.networkId = networkId;
     result.transactionId = 123;
-    result.commandId = GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN;
+    result.commandId = GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF;
     result.status = GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN;
     result.completedStep = 14;
     result.totalSteps = 14;

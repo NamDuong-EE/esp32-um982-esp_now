@@ -64,6 +64,8 @@ int publishGGA(String &nmeaBuffer)
                     ggaDebugSnapshot.lat = ggaData.lat;
                     ggaDebugSnapshot.lon = ggaData.lon;
                     ggaDebugSnapshot.heightM = ggaData.height_m;
+                    ggaDebugSnapshot.ellipsoidHeightM =
+                        ggaData.height_m + ggaData.geoid_separation_m;
                     ggaDebugSnapshot.fixQuality = static_cast<uint8_t>(ggaData.fix_quality.toInt());
                     ggaDebugSnapshot.satellites = static_cast<uint8_t>(ggaData.satellites.toInt());
                     ggaDebugSnapshot.lastUpdateMs = millis();
@@ -127,6 +129,7 @@ String formSerialDebugStatusString()
     payload += ",\"lat\":" + String(gga.lat, 7);
     payload += ",\"lon\":" + String(gga.lon, 7);
     payload += ",\"height_m\":" + String(gga.heightM, 3);
+    payload += ",\"ellipsoid_height_m\":" + String(gga.ellipsoidHeightM, 3);
     payload += ",\"fix_quality\":" + String(gga.fixQuality);
     payload += ",\"satellites\":" + String(gga.satellites);
     payload += ",\"free_heap_bytes\":" + String(ESP.getFreeHeap());

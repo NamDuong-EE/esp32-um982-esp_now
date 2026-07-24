@@ -296,7 +296,11 @@ void roverLlhStatusTask(void* parameter) {
             continue;
         }
         espnowTrySendRoverLlhStatus(
-            gga.lat, gga.lon, gga.heightM, gga.fixQuality);
+            gga.lat,
+            gga.lon,
+            gga.heightM,
+            gga.ellipsoidHeightM,
+            gga.fixQuality);
     }
 }
 

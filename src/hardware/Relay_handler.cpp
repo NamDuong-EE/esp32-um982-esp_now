@@ -960,6 +960,7 @@ bool relayProcessNextLlh(TickType_t waitTicks) {
     forwarded.latitudeE7 = childPacket.latitudeE7;
     forwarded.longitudeE7 = childPacket.longitudeE7;
     forwarded.heightMm = childPacket.heightMm;
+    forwarded.ellipsoidHeightMm = childPacket.ellipsoidHeightMm;
     forwarded.fixQuality = childPacket.fixQuality;
     if (!rtcm_espnow::validateRelayedRoverLlhStatus(forwarded, sizeof(forwarded))) {
         incrementStat(&RelayStats::childLlhForwardFailures);

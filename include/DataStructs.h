@@ -5,6 +5,7 @@ typedef struct {
   double lat;
   double lon;
   double height_m;
+  double geoid_separation_m;
   String fix_quality;
   String satellites;
 } gga_data_struct;

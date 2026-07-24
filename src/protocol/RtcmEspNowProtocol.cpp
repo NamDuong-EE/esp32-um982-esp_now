@@ -93,12 +93,16 @@ bool validateGnssCommandRequest(const GnssCommandRequestPacket& packet,
                                 uint32_t expectedNetworkId,
                                 const uint8_t* pairingKey,
                                 std::size_t pairingKeyLength) {
+    const bool validEcef =
+        packet.ecefXmm >= -ECEF_MM_LIMIT && packet.ecefXmm <= ECEF_MM_LIMIT &&
+        packet.ecefYmm >= -ECEF_MM_LIMIT && packet.ecefYmm <= ECEF_MM_LIMIT &&
+        packet.ecefZmm >= -ECEF_MM_LIMIT && packet.ecefZmm <= ECEF_MM_LIMIT &&
+        (packet.ecefXmm < -90000 || packet.ecefXmm > 90000);
     const bool validCommandParameters =
-        (packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN &&
-         packet.surveyDurationSeconds >= GNSS_SURVEY_MIN_SECONDS &&
-         packet.surveyDurationSeconds <= GNSS_SURVEY_MAX_SECONDS) ||
         (packet.commandId == GNSS_COMMAND_SWITCH_TO_ROVER &&
-         packet.surveyDurationSeconds == 0);
+         packet.ecefXmm == 0 && packet.ecefYmm == 0 && packet.ecefZmm == 0) ||
+        (packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF &&
+         validEcef);
     return receivedLength == sizeof(GnssCommandRequestPacket) &&
            packet.common.magic == MAGIC &&
            packet.common.version == VERSION &&
@@ -121,8 +125,8 @@ bool validateGnssCommandResult(const GnssCommandResultPacket& packet,
            packet.common.packetType == PACKET_TYPE_GNSS_COMMAND_RESULT &&
            packet.networkId == expectedNetworkId &&
            packet.transactionId != 0 &&
-           (packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN ||
-            packet.commandId == GNSS_COMMAND_SWITCH_TO_ROVER) &&
+           (packet.commandId == GNSS_COMMAND_SWITCH_TO_ROVER ||
+            packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF) &&
            packet.status >= GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN &&
            packet.status <= GNSS_COMMAND_STATUS_BUSY &&
            packet.authTag == pairingAuthTag(packet, pairingKey, pairingKeyLength);

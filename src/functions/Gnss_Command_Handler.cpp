@@ -138,14 +138,16 @@ bool executeCommandSteps(const QueuedGnssCommand& queued,
     return succeeded;
 }
 
-bool executeBaseSurveyInSequence(const QueuedGnssCommand& queued,
-                                 rtcm_espnow::GnssCommandResultPacket& result)
+bool executeBaseFixedEcefSequence(const QueuedGnssCommand& queued,
+                                  rtcm_espnow::GnssCommandResultPacket& result)
 {
-    char modeCommand[48] = {};
+    char modeCommand[128] = {};
     snprintf(modeCommand,
              sizeof(modeCommand),
-             "mode base time %lu\r\n",
-             static_cast<unsigned long>(queued.packet.surveyDurationSeconds));
+             "mode base %.4f %.4f %.4f\r\n",
+             static_cast<double>(queued.packet.ecefXmm) / 1000.0,
+             static_cast<double>(queued.packet.ecefYmm) / 1000.0,
+             static_cast<double>(queued.packet.ecefZmm) / 1000.0);
     const CommandStep steps[BASE_COMMAND_STEPS] = {
         {"unlogall\r\n", GNSS_COMMAND_UNLOG_DELAY_MS},
         {modeCommand, GNSS_COMMAND_MODE_DELAY_MS},
@@ -189,7 +191,7 @@ bool gnssCommandSetup()
         Serial.println("[ROVER][GNSS_CMD][ERROR] Cannot create command queue");
         return false;
     }
-    Serial.println("[ROVER][GNSS_CMD] Ready actions=base_survey_in,rover port=COM2");
+    Serial.println("[ROVER][GNSS_CMD] Ready actions=base_fixed_ecef,rover port=COM2");
     return true;
 }
 
@@ -231,10 +233,9 @@ bool gnssCommandHandleRequest(const uint8_t* sourceMac,
                       static_cast<unsigned long>(queued.packet.transactionId));
         return true;
     }
-    Serial.printf("[ROVER][GNSS_CMD] Queued txn=%lu command_id=%u duration_s=%lu\n",
+    Serial.printf("[ROVER][GNSS_CMD] Queued txn=%lu command_id=%u\n",
                   static_cast<unsigned long>(queued.packet.transactionId),
-                  queued.packet.commandId,
-                  static_cast<unsigned long>(queued.packet.surveyDurationSeconds));
+                  queued.packet.commandId);
     return true;
 }
 
@@ -259,8 +260,8 @@ void gnssCommandTask(void* parameter)
 
         rtcm_espnow::GnssCommandResultPacket result = makeResult(queued.packet);
         if (queued.packet.commandId ==
-            rtcm_espnow::GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN) {
-            executeBaseSurveyInSequence(queued, result);
+            rtcm_espnow::GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF) {
+            executeBaseFixedEcefSequence(queued, result);
         } else {
             executeRoverSequence(queued, result);
         }

@@ -887,6 +887,7 @@ bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence) {
 bool espnowTrySendRoverLlhStatus(double latitude,
                                  double longitude,
                                  double heightM,
+                                 double ellipsoidHeightM,
                                  uint8_t fixQuality) {
     static uint32_t statusSequence = 0;
     if (!ready || !hasActiveBaseMac) {
@@ -901,9 +902,12 @@ bool espnowTrySendRoverLlhStatus(double latitude,
         static_cast<double>(std::numeric_limits<int32_t>::max()) /
         rtcm_espnow::LLH_HEIGHT_SCALE;
     if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
-        !std::isfinite(heightM) || latitude < -90.0 || latitude > 90.0 ||
+        !std::isfinite(heightM) || !std::isfinite(ellipsoidHeightM) ||
+        latitude < -90.0 || latitude > 90.0 ||
         longitude < -180.0 || longitude > 180.0 ||
-        heightM < minHeightM || heightM > maxHeightM || fixQuality > 8) {
+        heightM < minHeightM || heightM > maxHeightM ||
+        ellipsoidHeightM < minHeightM || ellipsoidHeightM > maxHeightM ||
+        fixQuality > 8) {
         updateCounter(&EspNowRtcmStats::llhStatusFailures);
         return false;
     }
@@ -919,6 +923,8 @@ bool espnowTrySendRoverLlhStatus(double latitude,
         std::llround(longitude * rtcm_espnow::LLH_COORDINATE_SCALE));
     packet.heightMm = static_cast<int32_t>(
         std::llround(heightM * rtcm_espnow::LLH_HEIGHT_SCALE));
+    packet.ellipsoidHeightMm = static_cast<int32_t>(
+        std::llround(ellipsoidHeightM * rtcm_espnow::LLH_HEIGHT_SCALE));
     packet.fixQuality = fixQuality;
     if (!rtcm_espnow::validateRoverLlhStatus(packet, sizeof(packet))) {
         updateCounter(&EspNowRtcmStats::llhStatusFailures);
@@ -942,13 +948,16 @@ bool espnowTrySendRoverLlhStatus(double latitude,
     }
 
     updateCounter(&EspNowRtcmStats::llhStatusSent);
-    Serial.printf("[ROVER][LLH_TX] seq=%lu lat=%.7f lon=%.7f height_m=%.3f fix_quality=%u\n",
+    Serial.printf("[ROVER][LLH_TX] seq=%lu lat=%.7f lon=%.7f height_m=%.3f "
+                  "ellipsoid_height_m=%.3f fix_quality=%u\n",
                   static_cast<unsigned long>(packet.sequence),
                   static_cast<double>(packet.latitudeE7) /
                       rtcm_espnow::LLH_COORDINATE_SCALE,
                   static_cast<double>(packet.longitudeE7) /
                       rtcm_espnow::LLH_COORDINATE_SCALE,
                   static_cast<double>(packet.heightMm) /
+                      rtcm_espnow::LLH_HEIGHT_SCALE,
+                  static_cast<double>(packet.ellipsoidHeightMm) /
                       rtcm_espnow::LLH_HEIGHT_SCALE,
                   static_cast<unsigned>(packet.fixQuality));
     return true;

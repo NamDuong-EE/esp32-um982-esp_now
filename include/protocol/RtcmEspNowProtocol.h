@@ -21,8 +21,8 @@ inline constexpr uint8_t PACKET_TYPE_TEMP_RTCM_DATA = 10;
 inline constexpr uint8_t PACKET_TYPE_TEMP_RTCM_ACK = 11;
 inline constexpr uint8_t ROLE_BASE = 1;
 inline constexpr uint8_t ROLE_ROVER = 2;
-inline constexpr uint8_t GNSS_COMMAND_SWITCH_TO_BASE_SURVEY_IN = 1;
 inline constexpr uint8_t GNSS_COMMAND_SWITCH_TO_ROVER = 2;
+inline constexpr uint8_t GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF = 3;
 inline constexpr uint8_t GNSS_PORT_COM2 = 2;
 inline constexpr uint8_t GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN = 1;
 inline constexpr uint8_t GNSS_COMMAND_STATUS_REJECTED = 2;
@@ -32,11 +32,10 @@ inline constexpr uint16_t GNSS_COMMAND_DETAIL_NONE = 0;
 inline constexpr uint16_t GNSS_COMMAND_DETAIL_INVALID_REQUEST = 1;
 inline constexpr uint16_t GNSS_COMMAND_DETAIL_QUEUE_FULL = 2;
 inline constexpr uint16_t GNSS_COMMAND_DETAIL_UART_WRITE = 3;
-inline constexpr uint32_t GNSS_SURVEY_MIN_SECONDS = 10;
-inline constexpr uint32_t GNSS_SURVEY_MAX_SECONDS = 86400;
 inline constexpr uint8_t ACK_STATUS_WRITTEN = 1;
 inline constexpr double LLH_COORDINATE_SCALE = 10000000.0;
 inline constexpr double LLH_HEIGHT_SCALE = 1000.0;
+inline constexpr int64_t ECEF_MM_LIMIT = 7000000000LL;
 inline constexpr std::size_t ESPNOW_V1_MAX_PACKET_SIZE = 250;
 inline constexpr std::size_t MAX_RTCM_FRAME_SIZE = 1029;
 inline constexpr std::size_t MIN_RTCM_FRAME_SIZE = 6;
@@ -80,6 +79,7 @@ struct RoverLlhStatusPacket {
     int32_t latitudeE7;
     int32_t longitudeE7;
     int32_t heightMm;
+    int32_t ellipsoidHeightMm;
     uint8_t fixQuality;
 };
 
@@ -92,13 +92,16 @@ struct RelayedRoverLlhStatusPacket {
     int32_t latitudeE7;
     int32_t longitudeE7;
     int32_t heightMm;
+    int32_t ellipsoidHeightMm;
 };
 
 struct GnssCommandRequestPacket {
     EspNowCommonHeader common;
     uint32_t networkId;
     uint32_t transactionId;
-    uint32_t surveyDurationSeconds;
+    int64_t ecefXmm;
+    int64_t ecefYmm;
+    int64_t ecefZmm;
     uint8_t commandId;
     uint8_t targetPort;
     uint16_t reserved;
@@ -154,11 +157,11 @@ struct PairConfirmPacket {
 static_assert(sizeof(EspNowCommonHeader) == 4, "ESP-NOW common header must be 4 bytes");
 static_assert(sizeof(RtcmEspNowHeader) == 16, "RTCM ESP-NOW header must be 16 bytes");
 static_assert(sizeof(RtcmEspNowAck) == 12, "RTCM ESP-NOW ACK must be 12 bytes");
-static_assert(sizeof(RoverLlhStatusPacket) == 21, "ROVER_LLH_STATUS must be 21 bytes");
-static_assert(sizeof(RelayedRoverLlhStatusPacket) == 28,
-              "RELAYED_ROVER_LLH_STATUS must be 28 bytes");
-static_assert(sizeof(GnssCommandRequestPacket) == 24,
-              "GNSS_COMMAND_REQUEST must be 24 bytes");
+static_assert(sizeof(RoverLlhStatusPacket) == 25, "ROVER_LLH_STATUS must be 25 bytes");
+static_assert(sizeof(RelayedRoverLlhStatusPacket) == 32,
+              "RELAYED_ROVER_LLH_STATUS must be 32 bytes");
+static_assert(sizeof(GnssCommandRequestPacket) == 44,
+              "GNSS_COMMAND_REQUEST must be 44 bytes");
 static_assert(sizeof(GnssCommandResultPacket) == 24,
               "GNSS_COMMAND_RESULT must be 24 bytes");
 static_assert(sizeof(PairDiscoveryPacket) == 28, "PAIR_DISCOVERY must be 28 bytes");

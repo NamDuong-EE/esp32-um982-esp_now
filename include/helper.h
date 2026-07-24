@@ -26,6 +26,7 @@ struct GgaDebugSnapshot {
     double lat;
     double lon;
     double heightM;
+    double ellipsoidHeightM;
     uint8_t fixQuality;
     uint8_t satellites;
     uint32_t lastUpdateMs;
