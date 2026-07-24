@@ -6,7 +6,9 @@
 
 #include "Prog_Config.h"
 #include "hardware/Espnow_tx_manager.h"
+#include "hardware/Relay_handler.h"
 #include "hardware/TemporaryBaseUplink.h"
+#include "helper.h"
 #include "protocol/RtcmEspNowProtocol.h"
 
 extern SemaphoreHandle_t gnssTxMutex;
@@ -44,6 +46,13 @@ void setPromotedToBase(bool promoted)
     stats.promotedToBase = promoted;
     portEXIT_CRITICAL(&statsMux);
     temporaryBaseUplinkSetEnabled(promoted);
+}
+
+void setRtkCorrectionHeld(bool held)
+{
+    portENTER_CRITICAL(&statsMux);
+    stats.rtkCorrectionHeld = held;
+    portEXIT_CRITICAL(&statsMux);
 }
 
 bool macEquals(const uint8_t* left, const uint8_t* right)
@@ -145,9 +154,12 @@ bool executeBaseFixedEcefSequence(const QueuedGnssCommand& queued,
     snprintf(modeCommand,
              sizeof(modeCommand),
              "mode base %.4f %.4f %.4f\r\n",
-             static_cast<double>(queued.packet.ecefXmm) / 1000.0,
-             static_cast<double>(queued.packet.ecefYmm) / 1000.0,
-             static_cast<double>(queued.packet.ecefZmm) / 1000.0);
+             static_cast<double>(queued.packet.ecefXScaled) /
+                 rtcm_espnow::ECEF_SCALE,
+             static_cast<double>(queued.packet.ecefYScaled) /
+                 rtcm_espnow::ECEF_SCALE,
+             static_cast<double>(queued.packet.ecefZScaled) /
+                 rtcm_espnow::ECEF_SCALE);
     const CommandStep steps[BASE_COMMAND_STEPS] = {
         {"unlogall\r\n", GNSS_COMMAND_UNLOG_DELAY_MS},
         {modeCommand, GNSS_COMMAND_MODE_DELAY_MS},
@@ -164,7 +176,12 @@ bool executeBaseFixedEcefSequence(const QueuedGnssCommand& queued,
         {"rtcm1045 com2 1\r\n", GNSS_COMMAND_OUTPUT_DELAY_MS},
         {"saveconfig\r\n", 0},
     };
-    return executeCommandSteps(queued, result, steps, BASE_COMMAND_STEPS, true);
+    const bool succeeded =
+        executeCommandSteps(queued, result, steps, BASE_COMMAND_STEPS, true);
+    if (succeeded) {
+        setRtkCorrectionHeld(false);
+    }
+    return succeeded;
 }
 
 bool executeRoverSequence(const QueuedGnssCommand& queued,
@@ -176,7 +193,60 @@ bool executeRoverSequence(const QueuedGnssCommand& queued,
         {"gpgga com2 1\r\n", GNSS_COMMAND_OUTPUT_DELAY_MS},
         {"saveconfig\r\n", 0},
     };
-    return executeCommandSteps(queued, result, steps, ROVER_COMMAND_STEPS, false);
+    const bool succeeded =
+        executeCommandSteps(queued, result, steps, ROVER_COMMAND_STEPS, false);
+    if (succeeded) {
+        setRtkCorrectionHeld(false);
+    }
+    return succeeded;
+}
+
+bool executeRtkResetSequence(const QueuedGnssCommand& queued,
+                             rtcm_espnow::GnssCommandResultPacket& result)
+{
+    setRtkCorrectionHeld(true);
+    clearGgaDebugSnapshot();
+    const CommandStep steps[] = {
+        {"config rtk disable\r\n", GNSS_COMMAND_OUTPUT_DELAY_MS},
+    };
+    const bool localReset =
+        executeCommandSteps(queued, result, steps, 1, false);
+    if (!localReset) {
+        setRtkCorrectionHeld(false);
+    }
+    if constexpr (ROVER_RELAY_MODE) {
+        if (localReset &&
+            !relayRequestChildrenRtkReset(queued.packet.transactionId)) {
+            result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
+            result.detailCode =
+                rtcm_espnow::GNSS_COMMAND_DETAIL_QUEUE_FULL;
+            return false;
+        }
+    }
+    return localReset;
+}
+
+bool executeRtkResumeSequence(const QueuedGnssCommand& queued,
+                              rtcm_espnow::GnssCommandResultPacket& result)
+{
+    const CommandStep steps[] = {
+        {"config rtk user_defaults\r\n", GNSS_COMMAND_OUTPUT_DELAY_MS},
+    };
+    const bool localResume =
+        executeCommandSteps(queued, result, steps, 1, false);
+    if (localResume) {
+        setRtkCorrectionHeld(false);
+    }
+    if constexpr (ROVER_RELAY_MODE) {
+        if (localResume &&
+            !relayRequestChildrenRtkResume(queued.packet.transactionId)) {
+            result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
+            result.detailCode =
+                rtcm_espnow::GNSS_COMMAND_DETAIL_QUEUE_FULL;
+            return false;
+        }
+    }
+    return localResume;
 }
 }
 
@@ -191,7 +261,9 @@ bool gnssCommandSetup()
         Serial.println("[ROVER][GNSS_CMD][ERROR] Cannot create command queue");
         return false;
     }
-    Serial.println("[ROVER][GNSS_CMD] Ready actions=base_fixed_ecef,rover port=COM2");
+    Serial.println(
+        "[ROVER][GNSS_CMD] Ready actions=base_fixed_ecef,rover,rtk_reset "
+        "port=COM2");
     return true;
 }
 
@@ -262,6 +334,12 @@ void gnssCommandTask(void* parameter)
         if (queued.packet.commandId ==
             rtcm_espnow::GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF) {
             executeBaseFixedEcefSequence(queued, result);
+        } else if (queued.packet.commandId ==
+                   rtcm_espnow::GNSS_COMMAND_RESET_RTK) {
+            executeRtkResetSequence(queued, result);
+        } else if (queued.packet.commandId ==
+                   rtcm_espnow::GNSS_COMMAND_RESUME_RTK) {
+            executeRtkResumeSequence(queued, result);
         } else {
             executeRoverSequence(queued, result);
         }
@@ -281,9 +359,18 @@ void gnssCommandTask(void* parameter)
 bool gnssCommandAcceptsRtcmCorrection()
 {
     portENTER_CRITICAL(&statsMux);
-    const bool accepts = !stats.promotedToBase;
+    const bool accepts = !stats.promotedToBase &&
+                         !stats.rtkCorrectionHeld;
     portEXIT_CRITICAL(&statsMux);
     return accepts;
+}
+
+bool gnssCommandPublishesRoverStatus()
+{
+    portENTER_CRITICAL(&statsMux);
+    const bool publishes = !stats.promotedToBase;
+    portEXIT_CRITICAL(&statsMux);
+    return publishes;
 }
 
 GnssCommandStats gnssCommandGetStats()

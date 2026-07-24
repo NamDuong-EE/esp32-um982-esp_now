@@ -53,51 +53,53 @@ void test_frame_ack_validation() {
     TEST_ASSERT_FALSE(validateFrameAck(ack, sizeof(ack)));
 }
 
-void test_rover_llh_status_validation() {
-    RoverLlhStatusPacket status{};
+void test_rover_ecef_status_validation() {
+    RoverEcefStatusPacket status{};
     status.common.magic = MAGIC;
     status.common.version = VERSION;
-    status.common.packetType = PACKET_TYPE_ROVER_LLH_STATUS;
+    status.common.packetType = PACKET_TYPE_ROVER_ECEF_STATUS;
     status.sequence = 7;
-    status.latitudeE7 = 210734567;
-    status.longitudeE7 = 1058123456;
-    status.heightMm = 12345;
-    status.ellipsoidHeightMm = -15899;
+    status.gnssTimeMsOfDay = 45296123;
+    status.correctionStreamId = 12;
+    status.ecefXScaled = -16200000000LL;
+    status.ecefYScaled = 57300000000LL;
+    status.ecefZScaled = 22600000000LL;
     status.fixQuality = 4;
 
-    TEST_ASSERT_EQUAL_UINT32(25, sizeof(RoverLlhStatusPacket));
-    TEST_ASSERT_TRUE(validateRoverLlhStatus(status, sizeof(status)));
-    status.latitudeE7 = 900000001;
-    TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
-    status.latitudeE7 = 210734567;
+    TEST_ASSERT_EQUAL_UINT32(40, sizeof(RoverEcefStatusPacket));
+    TEST_ASSERT_TRUE(validateRoverEcefStatus(status, sizeof(status)));
+    status.ecefXScaled = 1000;
+    TEST_ASSERT_FALSE(validateRoverEcefStatus(status, sizeof(status)));
+    status.ecefXScaled = -16200000000LL;
     status.common.packetType = PACKET_TYPE_FRAME_ACK;
-    TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
-    status.common.packetType = PACKET_TYPE_ROVER_LLH_STATUS;
+    TEST_ASSERT_FALSE(validateRoverEcefStatus(status, sizeof(status)));
+    status.common.packetType = PACKET_TYPE_ROVER_ECEF_STATUS;
     status.fixQuality = 9;
-    TEST_ASSERT_FALSE(validateRoverLlhStatus(status, sizeof(status)));
+    TEST_ASSERT_FALSE(validateRoverEcefStatus(status, sizeof(status)));
 }
 
-void test_relayed_rover_llh_status_validation() {
-    RelayedRoverLlhStatusPacket status{};
+void test_relayed_rover_ecef_status_validation() {
+    RelayedRoverEcefStatusPacket status{};
     status.common.magic = MAGIC;
     status.common.version = VERSION;
-    status.common.packetType = PACKET_TYPE_RELAYED_ROVER_LLH_STATUS;
+    status.common.packetType = PACKET_TYPE_RELAYED_ROVER_ECEF_STATUS;
     status.sequence = 9;
     const uint8_t roverMac[6] = {0x58, 0x2A, 0xBD, 0x71, 0xE4, 0xF0};
     std::memcpy(status.roverMac, roverMac, sizeof(roverMac));
-    status.latitudeE7 = 210734567;
-    status.longitudeE7 = 1058123456;
-    status.heightMm = 12345;
-    status.ellipsoidHeightMm = -15899;
+    status.gnssTimeMsOfDay = 45296123;
+    status.correctionStreamId = 12;
+    status.ecefXScaled = -16200000000LL;
+    status.ecefYScaled = 57300000000LL;
+    status.ecefZScaled = 22600000000LL;
     status.fixQuality = 5;
 
-    TEST_ASSERT_EQUAL_UINT32(32, sizeof(RelayedRoverLlhStatusPacket));
-    TEST_ASSERT_TRUE(validateRelayedRoverLlhStatus(status, sizeof(status)));
+    TEST_ASSERT_EQUAL_UINT32(48, sizeof(RelayedRoverEcefStatusPacket));
+    TEST_ASSERT_TRUE(validateRelayedRoverEcefStatus(status, sizeof(status)));
     std::memset(status.roverMac, 0, sizeof(status.roverMac));
-    TEST_ASSERT_FALSE(validateRelayedRoverLlhStatus(status, sizeof(status)));
+    TEST_ASSERT_FALSE(validateRelayedRoverEcefStatus(status, sizeof(status)));
     std::memcpy(status.roverMac, roverMac, sizeof(roverMac));
     status.fixQuality = 9;
-    TEST_ASSERT_FALSE(validateRelayedRoverLlhStatus(status, sizeof(status)));
+    TEST_ASSERT_FALSE(validateRelayedRoverEcefStatus(status, sizeof(status)));
 }
 
 void test_pairing_packet_validation() {
@@ -168,9 +170,9 @@ void test_gnss_command_packet_validation() {
     request.networkId = networkId;
     request.transactionId = 123;
     request.commandId = GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF;
-    request.ecefXmm = -1620000000LL;
-    request.ecefYmm = 5730000000LL;
-    request.ecefZmm = 2260000000LL;
+    request.ecefXScaled = -16200000000LL;
+    request.ecefYScaled = 57300000000LL;
+    request.ecefZScaled = 22600000000LL;
     request.targetPort = GNSS_PORT_COM2;
     request.authTag = pairingAuthTag(request, key.data(), key.size());
 
@@ -181,21 +183,30 @@ void test_gnss_command_packet_validation() {
     TEST_ASSERT_FALSE(validateGnssCommandRequest(
         request, sizeof(request), networkId, key.data(), key.size()));
     request.transactionId = 123;
-    request.ecefXmm = 1000;
+    request.ecefXScaled = 1000;
     request.authTag = pairingAuthTag(request, key.data(), key.size());
     TEST_ASSERT_FALSE(validateGnssCommandRequest(
         request, sizeof(request), networkId, key.data(), key.size()));
     request.transactionId = 123;
     request.commandId = GNSS_COMMAND_SWITCH_TO_ROVER;
-    request.ecefXmm = 0;
-    request.ecefYmm = 0;
-    request.ecefZmm = 0;
+    request.ecefXScaled = 0;
+    request.ecefYScaled = 0;
+    request.ecefZScaled = 0;
     request.authTag = pairingAuthTag(request, key.data(), key.size());
     TEST_ASSERT_TRUE(validateGnssCommandRequest(
         request, sizeof(request), networkId, key.data(), key.size()));
-    request.ecefXmm = 1000;
+    request.ecefXScaled = 1000;
     request.authTag = pairingAuthTag(request, key.data(), key.size());
     TEST_ASSERT_FALSE(validateGnssCommandRequest(
+        request, sizeof(request), networkId, key.data(), key.size()));
+    request.commandId = GNSS_COMMAND_RESET_RTK;
+    request.ecefXScaled = 0;
+    request.authTag = pairingAuthTag(request, key.data(), key.size());
+    TEST_ASSERT_TRUE(validateGnssCommandRequest(
+        request, sizeof(request), networkId, key.data(), key.size()));
+    request.commandId = GNSS_COMMAND_RESUME_RTK;
+    request.authTag = pairingAuthTag(request, key.data(), key.size());
+    TEST_ASSERT_TRUE(validateGnssCommandRequest(
         request, sizeof(request), networkId, key.data(), key.size()));
 
     GnssCommandResultPacket result{};
@@ -224,6 +235,12 @@ void test_gnss_command_packet_validation() {
     result.authTag = pairingAuthTag(result, key.data(), key.size());
     TEST_ASSERT_TRUE(validateGnssCommandResult(
         result, sizeof(result), networkId, key.data(), key.size()));
+    result.commandId = GNSS_COMMAND_RESUME_RTK;
+    result.completedStep = 1;
+    result.totalSteps = 1;
+    result.authTag = pairingAuthTag(result, key.data(), key.size());
+    TEST_ASSERT_TRUE(validateGnssCommandResult(
+        result, sizeof(result), networkId, key.data(), key.size()));
 }
 
 void test_rtcm_crc_validation() {
@@ -243,8 +260,8 @@ void runTests() {
     RUN_TEST(test_header_and_fragment_boundaries);
     RUN_TEST(test_packet_header_validation);
     RUN_TEST(test_frame_ack_validation);
-    RUN_TEST(test_rover_llh_status_validation);
-    RUN_TEST(test_relayed_rover_llh_status_validation);
+    RUN_TEST(test_rover_ecef_status_validation);
+    RUN_TEST(test_relayed_rover_ecef_status_validation);
     RUN_TEST(test_pairing_packet_validation);
     RUN_TEST(test_gnss_command_packet_validation);
     RUN_TEST(test_rtcm_crc_validation);

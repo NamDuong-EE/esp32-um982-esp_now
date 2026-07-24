@@ -15,6 +15,7 @@ struct GnssCommandStats {
     uint32_t resultsSent = 0;
     uint32_t resultSendFailures = 0;
     bool promotedToBase = false;
+    bool rtkCorrectionHeld = false;
 };
 
 bool gnssCommandSetup();
@@ -23,6 +24,7 @@ bool gnssCommandHandleRequest(const uint8_t* sourceMac,
                               int length);
 void gnssCommandTask(void* parameter);
 bool gnssCommandAcceptsRtcmCorrection();
+bool gnssCommandPublishesRoverStatus();
 GnssCommandStats gnssCommandGetStats();
 
 #endif // GNSS_COMMAND_HANDLER_H

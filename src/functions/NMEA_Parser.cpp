@@ -1,5 +1,7 @@
 #include "functions/NMEA_Parser.h"
 
+#include "functions/Ecef_Geodesy.h"
+
 double nmeaToDecimal(String nmeaPos, String dir) {
   if (nmeaPos.length() < 4) return 0.0;
   int dotIndex = nmeaPos.indexOf('.');
@@ -34,6 +36,7 @@ boolean parseGGA_toStruct(String ggaMsg, gga_data_struct &ggaData) {
   }
 
   if (count >= 14) {
+    String utcStr = ggaMsg.substring(comma[0] + 1, comma[1]);
     String latStr = ggaMsg.substring(comma[1] + 1, comma[2]);
     String latDir = ggaMsg.substring(comma[2] + 1, comma[3]);
     String lonStr = ggaMsg.substring(comma[3] + 1, comma[4]);
@@ -43,8 +46,10 @@ boolean parseGGA_toStruct(String ggaMsg, gga_data_struct &ggaData) {
     String heightStr = ggaMsg.substring(comma[8] + 1, comma[9]);
     String geoidSeparationStr = ggaMsg.substring(comma[10] + 1, comma[11]);
 
+    uint32_t gnssTimeMsOfDay = 0;
     if (latStr.length() > 0 && lonStr.length() > 0 &&
-        geoidSeparationStr.length() > 0) {
+        geoidSeparationStr.length() > 0 &&
+        parseGgaUtcMsOfDay(utcStr, gnssTimeMsOfDay)) {
       double latDD = nmeaToDecimal(latStr, latDir);
       double lonDD = nmeaToDecimal(lonStr, lonDir);
       
@@ -52,6 +57,7 @@ boolean parseGGA_toStruct(String ggaMsg, gga_data_struct &ggaData) {
       ggaData.lon = lonDD;
       ggaData.height_m = heightStr.toDouble();
       ggaData.geoid_separation_m = geoidSeparationStr.toDouble();
+      ggaData.gnss_time_ms_of_day = gnssTimeMsOfDay;
       ggaData.fix_quality = rtkStr;
       ggaData.satellites = satStr;
                

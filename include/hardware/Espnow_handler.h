@@ -46,11 +46,12 @@ void espnowLoop();
 QueueHandle_t espnowGetReceiveQueue();
 EspNowRtcmStats espnowGetStats();
 bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence);
-bool espnowTrySendRoverLlhStatus(double latitude,
-                                 double longitude,
-                                 double heightM,
-                                 double ellipsoidHeightM,
-                                 uint8_t fixQuality);
+bool espnowTrySendRoverEcefStatus(int64_t ecefXScaled,
+                                  int64_t ecefYScaled,
+                                  int64_t ecefZScaled,
+                                  uint32_t gnssTimeMsOfDay,
+                                  uint16_t correctionStreamId,
+                                  uint8_t fixQuality);
 bool espnowGetBaseMac(uint8_t mac[6]);
 
 void espnowRecordInvalidHeader();

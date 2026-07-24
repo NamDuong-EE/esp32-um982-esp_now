@@ -158,7 +158,7 @@ void gnssParseTask(void* parameter) {
     currentLine.reserve(512);
 
     while (true) {
-        if (!gnssCommandAcceptsRtcmCorrection()) {
+        if (!gnssCommandPublishesRoverStatus()) {
             while (Serial1.available()) {
                 const int value = Serial1.read();
                 if (value >= 0) {
@@ -231,7 +231,7 @@ void healthCheckTask(void* parameter) {
             Serial.printf(
                 "[ROVER][GNSS_CMD][HEALTH] rx=%lu invalid=%lu queue_overflow=%lu "
                 "duplicate=%lu completed=%lu result_sent=%lu result_fail=%lu "
-                "uart_fail=%lu promoted_to_base=%u\n",
+                "uart_fail=%lu promoted_to_base=%u rtk_correction_held=%u\n",
                 static_cast<unsigned long>(command.requestsReceived),
                 static_cast<unsigned long>(command.requestsInvalid),
                 static_cast<unsigned long>(command.queueOverflow),
@@ -240,7 +240,8 @@ void healthCheckTask(void* parameter) {
                 static_cast<unsigned long>(command.resultsSent),
                 static_cast<unsigned long>(command.resultSendFailures),
                 static_cast<unsigned long>(command.uartWriteFailures),
-                command.promotedToBase ? 1U : 0U);
+                command.promotedToBase ? 1U : 0U,
+                command.rtkCorrectionHeld ? 1U : 0U);
             Serial.printf(
                 "[TEMP_BASE][UPLINK][HEALTH] enabled=%u uart_bytes=%lu parsed=%lu "
                 "crc_error=%lu queue_overflow=%lu sent=%lu dropped=%lu fragments=%lu "
@@ -282,7 +283,7 @@ void roverLlhStatusTask(void* parameter) {
     TickType_t lastWake = xTaskGetTickCount();
     while (true) {
         vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(ROVER_LLH_STATUS_INTERVAL_MS));
-        if (!espnowIsReady() || !gnssCommandAcceptsRtcmCorrection()) {
+        if (!espnowIsReady() || !gnssCommandPublishesRoverStatus()) {
             continue;
         }
 
@@ -295,11 +296,12 @@ void roverLlhStatusTask(void* parameter) {
         if (!gga.valid || now - gga.lastUpdateMs > ROVER_LLH_MAX_GGA_AGE_MS) {
             continue;
         }
-        espnowTrySendRoverLlhStatus(
-            gga.lat,
-            gga.lon,
-            gga.heightM,
-            gga.ellipsoidHeightM,
+        espnowTrySendRoverEcefStatus(
+            gga.ecefXScaled,
+            gga.ecefYScaled,
+            gga.ecefZScaled,
+            gga.gnssTimeMsOfDay,
+            getLastCompletedRtcmStreamId(),
             gga.fixQuality);
     }
 }

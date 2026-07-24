@@ -884,49 +884,36 @@ bool espnowSendFrameAck(uint16_t streamId, uint32_t frameSequence) {
     return true;
 }
 
-bool espnowTrySendRoverLlhStatus(double latitude,
-                                 double longitude,
-                                 double heightM,
-                                 double ellipsoidHeightM,
-                                 uint8_t fixQuality) {
+bool espnowTrySendRoverEcefStatus(int64_t ecefXScaled,
+                                  int64_t ecefYScaled,
+                                  int64_t ecefZScaled,
+                                  uint32_t gnssTimeMsOfDay,
+                                  uint16_t correctionStreamId,
+                                  uint8_t fixQuality) {
     static uint32_t statusSequence = 0;
     if (!ready || !hasActiveBaseMac) {
         updateCounter(&EspNowRtcmStats::llhStatusSkipped);
         return false;
     }
 
-    constexpr double minHeightM =
-        static_cast<double>(std::numeric_limits<int32_t>::min()) /
-        rtcm_espnow::LLH_HEIGHT_SCALE;
-    constexpr double maxHeightM =
-        static_cast<double>(std::numeric_limits<int32_t>::max()) /
-        rtcm_espnow::LLH_HEIGHT_SCALE;
-    if (!std::isfinite(latitude) || !std::isfinite(longitude) ||
-        !std::isfinite(heightM) || !std::isfinite(ellipsoidHeightM) ||
-        latitude < -90.0 || latitude > 90.0 ||
-        longitude < -180.0 || longitude > 180.0 ||
-        heightM < minHeightM || heightM > maxHeightM ||
-        ellipsoidHeightM < minHeightM || ellipsoidHeightM > maxHeightM ||
+    if (gnssTimeMsOfDay >= rtcm_espnow::GNSS_MILLISECONDS_PER_DAY ||
         fixQuality > 8) {
         updateCounter(&EspNowRtcmStats::llhStatusFailures);
         return false;
     }
 
-    rtcm_espnow::RoverLlhStatusPacket packet{};
+    rtcm_espnow::RoverEcefStatusPacket packet{};
     packet.common.magic = rtcm_espnow::MAGIC;
     packet.common.version = rtcm_espnow::VERSION;
-    packet.common.packetType = rtcm_espnow::PACKET_TYPE_ROVER_LLH_STATUS;
+    packet.common.packetType = rtcm_espnow::PACKET_TYPE_ROVER_ECEF_STATUS;
     packet.sequence = statusSequence++;
-    packet.latitudeE7 = static_cast<int32_t>(
-        std::llround(latitude * rtcm_espnow::LLH_COORDINATE_SCALE));
-    packet.longitudeE7 = static_cast<int32_t>(
-        std::llround(longitude * rtcm_espnow::LLH_COORDINATE_SCALE));
-    packet.heightMm = static_cast<int32_t>(
-        std::llround(heightM * rtcm_espnow::LLH_HEIGHT_SCALE));
-    packet.ellipsoidHeightMm = static_cast<int32_t>(
-        std::llround(ellipsoidHeightM * rtcm_espnow::LLH_HEIGHT_SCALE));
+    packet.gnssTimeMsOfDay = gnssTimeMsOfDay;
+    packet.correctionStreamId = correctionStreamId;
+    packet.ecefXScaled = ecefXScaled;
+    packet.ecefYScaled = ecefYScaled;
+    packet.ecefZScaled = ecefZScaled;
     packet.fixQuality = fixQuality;
-    if (!rtcm_espnow::validateRoverLlhStatus(packet, sizeof(packet))) {
+    if (!rtcm_espnow::validateRoverEcefStatus(packet, sizeof(packet))) {
         updateCounter(&EspNowRtcmStats::llhStatusFailures);
         return false;
     }
@@ -941,24 +928,24 @@ bool espnowTrySendRoverLlhStatus(double latitude,
     }
     if (result != EspNowTxResult::Success) {
         updateCounter(&EspNowRtcmStats::llhStatusFailures);
-        Serial.printf("[ROVER][LLH_TX][WARN] seq=%lu result=%s\n",
+        Serial.printf("[ROVER][ECEF_TX][WARN] seq=%lu result=%s\n",
                       static_cast<unsigned long>(packet.sequence),
                       espnowTxResultToString(result));
         return false;
     }
 
     updateCounter(&EspNowRtcmStats::llhStatusSent);
-    Serial.printf("[ROVER][LLH_TX] seq=%lu lat=%.7f lon=%.7f height_m=%.3f "
-                  "ellipsoid_height_m=%.3f fix_quality=%u\n",
+    Serial.printf("[ROVER][ECEF_TX] seq=%lu gnss_ms=%lu stream=%u "
+                  "ecef_m=(%.4f,%.4f,%.4f) fix_quality=%u\n",
                   static_cast<unsigned long>(packet.sequence),
-                  static_cast<double>(packet.latitudeE7) /
-                      rtcm_espnow::LLH_COORDINATE_SCALE,
-                  static_cast<double>(packet.longitudeE7) /
-                      rtcm_espnow::LLH_COORDINATE_SCALE,
-                  static_cast<double>(packet.heightMm) /
-                      rtcm_espnow::LLH_HEIGHT_SCALE,
-                  static_cast<double>(packet.ellipsoidHeightMm) /
-                      rtcm_espnow::LLH_HEIGHT_SCALE,
+                  static_cast<unsigned long>(packet.gnssTimeMsOfDay),
+                  static_cast<unsigned>(packet.correctionStreamId),
+                  static_cast<double>(packet.ecefXScaled) /
+                      rtcm_espnow::ECEF_SCALE,
+                  static_cast<double>(packet.ecefYScaled) /
+                      rtcm_espnow::ECEF_SCALE,
+                  static_cast<double>(packet.ecefZScaled) /
+                      rtcm_espnow::ECEF_SCALE,
                   static_cast<unsigned>(packet.fixQuality));
     return true;
 }

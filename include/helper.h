@@ -27,6 +27,10 @@ struct GgaDebugSnapshot {
     double lon;
     double heightM;
     double ellipsoidHeightM;
+    int64_t ecefXScaled;
+    int64_t ecefYScaled;
+    int64_t ecefZScaled;
+    uint32_t gnssTimeMsOfDay;
     uint8_t fixQuality;
     uint8_t satellites;
     uint32_t lastUpdateMs;
@@ -36,5 +40,6 @@ String formDeviceHealthString();
 String formSerialDebugStatusString();
 int publishGGA(String& nmeaBuffer);
 GgaDebugSnapshot getGgaDebugSnapshot();
+void clearGgaDebugSnapshot();
 
 #endif

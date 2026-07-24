@@ -1,5 +1,7 @@
 #include "helper.h"
 
+#include "functions/Ecef_Geodesy.h"
+
 extern String latestGGA;
 
 gga_data_struct ggaData;
@@ -58,6 +60,20 @@ int publishGGA(String &nmeaBuffer)
             bool parseOk = parseGGA_toStruct(nmeaBuffer, ggaData);
             if (parseOk)
             {
+                int64_t ecefXScaled = 0;
+                int64_t ecefYScaled = 0;
+                int64_t ecefZScaled = 0;
+                parseOk = geodeticToEcefScaled(
+                    ggaData.lat,
+                    ggaData.lon,
+                    ggaData.height_m + ggaData.geoid_separation_m,
+                    ecefXScaled,
+                    ecefYScaled,
+                    ecefZScaled);
+                if (!parseOk) {
+                    nmeaBuffer = "";
+                    return -1;
+                }
                 if (xSemaphoreTake(nmeaBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE)
                 {
                     ggaDebugSnapshot.valid = true;
@@ -66,6 +82,11 @@ int publishGGA(String &nmeaBuffer)
                     ggaDebugSnapshot.heightM = ggaData.height_m;
                     ggaDebugSnapshot.ellipsoidHeightM =
                         ggaData.height_m + ggaData.geoid_separation_m;
+                    ggaDebugSnapshot.ecefXScaled = ecefXScaled;
+                    ggaDebugSnapshot.ecefYScaled = ecefYScaled;
+                    ggaDebugSnapshot.ecefZScaled = ecefZScaled;
+                    ggaDebugSnapshot.gnssTimeMsOfDay =
+                        ggaData.gnss_time_ms_of_day;
                     ggaDebugSnapshot.fixQuality = static_cast<uint8_t>(ggaData.fix_quality.toInt());
                     ggaDebugSnapshot.satellites = static_cast<uint8_t>(ggaData.satellites.toInt());
                     ggaDebugSnapshot.lastUpdateMs = millis();
@@ -104,6 +125,16 @@ GgaDebugSnapshot getGgaDebugSnapshot()
         xSemaphoreGive(nmeaBufferMutex);
     }
     return snapshot;
+}
+
+void clearGgaDebugSnapshot()
+{
+    if (nmeaBufferMutex != nullptr &&
+        xSemaphoreTake(nmeaBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
+        ggaDebugSnapshot = {};
+        latestGGA = "";
+        xSemaphoreGive(nmeaBufferMutex);
+    }
 }
 
 String formSerialDebugStatusString()

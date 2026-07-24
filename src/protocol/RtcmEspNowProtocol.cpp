@@ -59,32 +59,47 @@ bool validateFrameAck(const RtcmEspNowAck& ack, std::size_t receivedLength) {
            ack.status == ACK_STATUS_WRITTEN;
 }
 
-bool validateRoverLlhStatus(const RoverLlhStatusPacket& packet,
-                            std::size_t receivedLength) {
-    return receivedLength == sizeof(RoverLlhStatusPacket) &&
+namespace {
+
+bool validEcef(int64_t x, int64_t y, int64_t z) {
+    return x >= -ECEF_SCALED_LIMIT && x <= ECEF_SCALED_LIMIT &&
+           y >= -ECEF_SCALED_LIMIT && y <= ECEF_SCALED_LIMIT &&
+           z >= -ECEF_SCALED_LIMIT && z <= ECEF_SCALED_LIMIT &&
+           (x < -900000 || x > 900000);
+}
+
+} // namespace
+
+bool validateRoverEcefStatus(const RoverEcefStatusPacket& packet,
+                             std::size_t receivedLength) {
+    return receivedLength == sizeof(RoverEcefStatusPacket) &&
            packet.common.magic == MAGIC &&
            packet.common.version == VERSION &&
-           packet.common.packetType == PACKET_TYPE_ROVER_LLH_STATUS &&
-           packet.latitudeE7 >= -900000000 && packet.latitudeE7 <= 900000000 &&
-           packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000 &&
+           packet.common.packetType == PACKET_TYPE_ROVER_ECEF_STATUS &&
+           packet.gnssTimeMsOfDay < GNSS_MILLISECONDS_PER_DAY &&
+           validEcef(packet.ecefXScaled,
+                     packet.ecefYScaled,
+                     packet.ecefZScaled) &&
            packet.fixQuality <= 8;
 }
 
-bool validateRelayedRoverLlhStatus(const RelayedRoverLlhStatusPacket& packet,
-                                   std::size_t receivedLength) {
+bool validateRelayedRoverEcefStatus(const RelayedRoverEcefStatusPacket& packet,
+                                    std::size_t receivedLength) {
     bool macConfigured = false;
     bool macBroadcast = true;
     for (uint8_t octet : packet.roverMac) {
         macConfigured = macConfigured || octet != 0;
         macBroadcast = macBroadcast && octet == 0xFF;
     }
-    return receivedLength == sizeof(RelayedRoverLlhStatusPacket) &&
+    return receivedLength == sizeof(RelayedRoverEcefStatusPacket) &&
            packet.common.magic == MAGIC &&
            packet.common.version == VERSION &&
-           packet.common.packetType == PACKET_TYPE_RELAYED_ROVER_LLH_STATUS &&
+           packet.common.packetType == PACKET_TYPE_RELAYED_ROVER_ECEF_STATUS &&
            macConfigured && !macBroadcast && (packet.roverMac[0] & 0x01U) == 0 &&
-           packet.latitudeE7 >= -900000000 && packet.latitudeE7 <= 900000000 &&
-           packet.longitudeE7 >= -1800000000 && packet.longitudeE7 <= 1800000000 &&
+           packet.gnssTimeMsOfDay < GNSS_MILLISECONDS_PER_DAY &&
+           validEcef(packet.ecefXScaled,
+                     packet.ecefYScaled,
+                     packet.ecefZScaled) &&
            packet.fixQuality <= 8;
 }
 
@@ -93,16 +108,25 @@ bool validateGnssCommandRequest(const GnssCommandRequestPacket& packet,
                                 uint32_t expectedNetworkId,
                                 const uint8_t* pairingKey,
                                 std::size_t pairingKeyLength) {
-    const bool validEcef =
-        packet.ecefXmm >= -ECEF_MM_LIMIT && packet.ecefXmm <= ECEF_MM_LIMIT &&
-        packet.ecefYmm >= -ECEF_MM_LIMIT && packet.ecefYmm <= ECEF_MM_LIMIT &&
-        packet.ecefZmm >= -ECEF_MM_LIMIT && packet.ecefZmm <= ECEF_MM_LIMIT &&
-        (packet.ecefXmm < -90000 || packet.ecefXmm > 90000);
+    const bool requestHasValidEcef =
+        validEcef(packet.ecefXScaled,
+                  packet.ecefYScaled,
+                  packet.ecefZScaled);
     const bool validCommandParameters =
         (packet.commandId == GNSS_COMMAND_SWITCH_TO_ROVER &&
-         packet.ecefXmm == 0 && packet.ecefYmm == 0 && packet.ecefZmm == 0) ||
+         packet.ecefXScaled == 0 &&
+         packet.ecefYScaled == 0 &&
+         packet.ecefZScaled == 0) ||
+        (packet.commandId == GNSS_COMMAND_RESET_RTK &&
+         packet.ecefXScaled == 0 &&
+         packet.ecefYScaled == 0 &&
+         packet.ecefZScaled == 0) ||
+        (packet.commandId == GNSS_COMMAND_RESUME_RTK &&
+         packet.ecefXScaled == 0 &&
+         packet.ecefYScaled == 0 &&
+         packet.ecefZScaled == 0) ||
         (packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF &&
-         validEcef);
+         requestHasValidEcef);
     return receivedLength == sizeof(GnssCommandRequestPacket) &&
            packet.common.magic == MAGIC &&
            packet.common.version == VERSION &&
@@ -126,7 +150,9 @@ bool validateGnssCommandResult(const GnssCommandResultPacket& packet,
            packet.networkId == expectedNetworkId &&
            packet.transactionId != 0 &&
            (packet.commandId == GNSS_COMMAND_SWITCH_TO_ROVER ||
-            packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF) &&
+             packet.commandId == GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF ||
+             packet.commandId == GNSS_COMMAND_RESET_RTK ||
+             packet.commandId == GNSS_COMMAND_RESUME_RTK) &&
            packet.status >= GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN &&
            packet.status <= GNSS_COMMAND_STATUS_BUSY &&
            packet.authTag == pairingAuthTag(packet, pairingKey, pairingKeyLength);

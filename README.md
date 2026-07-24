@@ -35,7 +35,7 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - [ ] Provision PMK/LMK và bật `ESPNOW_ENCRYPTION_ENABLED` khi triển khai bảo mật.
 - [ ] Kiểm thử end-to-end với Base repo riêng + ESP32U Rover + UM980/982.
 - [ ] Kiểm thử phần cứng topology `Base → Relay Rover → Child Rover`, gồm pairing, reset nguồn, retry và mất liên kết downstream.
-- [x] Triển khai giai đoạn 1 telemetry ngược `Rover → Base`: gửi LLH từ GGA ở 1 Hz, Base chỉ giữ trạng thái mới nhất trong RAM; chưa chuyển tiếp qua Relay và chưa gửi server.
+- [x] Telemetry ngược `Rover → Relay/Base`: đổi GGA sang ECEF, gửi 1 Hz và chỉ giữ snapshot mới nhất trong RAM.
 ## Kiến trúc Rover
 
 ### ESP-NOW field mode
@@ -49,37 +49,31 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - Kiến trúc pairing động đã thống nhất với Base theo hướng broadcast discovery bằng nút vật lý, sau đó lưu MAC và chuyển sang unicast.
 - Trạng thái/health mặc định chỉ log ra Serial USB.
 
-### Telemetry Rover → Base trực tiếp và qua Relay
+### Telemetry ECEF Rover → Base trực tiếp và qua Relay
 
-Rover thường gửi trạng thái GNSS trực tiếp về peer đã pair. Nếu peer đó là Relay, Relay giữ nguyên sequence/LLH/fix quality, thêm MAC Rover con và chuyển tiếp về Base.
-
-Relay đồng thời gửi LLH local của chính nó trực tiếp về Base bằng type `6`. Vì vậy Base/MQTT có hai snapshot độc lập: một theo MAC Relay (`via_relay=false`) và một theo MAC Rover con (`via_relay=true`).
+Rover parse `$GNGGA` hoặc `$GPGGA`, lấy UTC/fix quality và đổi WGS84 geodetic sang ECEF. Latitude, longitude và height chỉ dùng nội bộ; wire protocol và MQTT không truyền LLH.
 
 ```text
 UM980/982 Rover ── GGA ──> ESP32 Rover
-                              │
-                              │ ROVER_LLH_STATUS unicast · 1 Hz
+                              │ ROVER_ECEF_STATUS · type 6 · 40 byte · 1 Hz
                               ▼
-ESP32 Base ── latest state trong RAM
+ESP32 Base ── latest ECEF trong RAM
 
-Child Rover ── ROVER_LLH_STATUS · 25 byte ──> Relay
-Relay ── RELAYED_ROVER_LLH_STATUS · 32 byte ──> Base
+Child Rover ── ROVER_ECEF_STATUS ──> Relay
+Relay ── RELAYED_ROVER_ECEF_STATUS · type 7 · 48 byte ──> Base
 ```
 
 Nguyên tắc hiện tại:
 
-1. Packet trực tiếp `ROVER_LLH_STATUS` (type `6`, 25 byte); packet chuyển tiếp `RELAYED_ROVER_LLH_STATUS` (type `7`, 32 byte) thêm MAC Rover con. Cả hai mang `fixQuality`, height MSL và ellipsoidal height.
-2. Rover gửi tối đa 1 packet mỗi giây tới đúng `base_mac` đã pair. Telemetry có ưu tiên thấp hơn pairing và RTCM ACK; nếu TX manager đang bận thì có thể bỏ lần gửi hiện tại, không retry vì packet kế tiếp sẽ thay thế sau một giây.
-3. Packet dùng fixed-point `int32_t`: latitude/longitude nhân `10^7`, hai height đổi từ mét sang millimetre; `fixQuality` dùng `uint8_t` và chấp nhận giá trị GGA `0...8`. `heightMm` là altitude MSL ở trường 9 GGA; `ellipsoidHeightMm = altitude_MSL + geoid_separation` dùng cho ECEF. GGA thiếu geoid separation không cập nhật snapshot hợp lệ.
-4. Rover con chỉ cần pair với Relay và vẫn chạy firmware Normal. Relay gửi LLH local của nó về Base, đồng thời chỉ nhận LLH downstream từ MAC thuộc danh sách đã pair. Mỗi Rover con có một slot LLH latest-only riêng; trạng thái mới ghi đè trạng thái cũ của chính Rover đó khi RTCM đang bận, và task forward chọn các slot theo round-robin.
-5. Callback ESP-NOW phía Base chỉ kiểm tra source MAC/length/magic/version rồi copy packet vào một slot RAM tương ứng Rover; không tạo JSON, gọi MQTT hoặc ghi flash trong callback Wi-Fi.
-6. Base giữ đúng một bản ghi mới nhất cho mỗi Rover trong RAM và packet mới ghi đè packet cũ. Trạng thái này không được ghi NVS/flash. Khi Base restart, RAM bị xóa nhưng Rover sẽ gửi lại trong tối đa một giây.
-7. NVS của Base tiếp tục chỉ lưu dữ liệu provisioning cần tồn tại qua restart như danh sách MAC Rover đã pair; không dùng NVS để lưu lịch sử LLH 1 Hz.
-8. Base xác định Rover trực tiếp bằng source MAC; với packet chuyển tiếp, Base xác thực source MAC Relay đã pair rồi dùng MAC Rover con trong packet làm danh tính nguồn.
-9. MQTT giữ topic theo MAC Rover con và thêm `fix_quality`, `via_relay`, `relay_mac` vào JSON. LLH vẫn chỉ giữ latest snapshot trong RAM, không ghi flash.
-10. Health Relay có các bộ đếm `child_llh_received`, `child_llh_forwarded`, `child_llh_forward_skipped`, `child_llh_forward_failures`; Base có `llh_relayed` và `llh_capacity_drop`.
+1. Wire protocol là version `2`; Base, Relay và mọi Rover phải được nạp đồng bộ.
+2. ECEF X/Y/Z dùng `int64_t` scale `10000`, tương ứng `0,0001 m`; log và lệnh `MODE BASE X Y Z` in bốn chữ số sau dấu phẩy.
+3. Type `6` mang sequence, GNSS milliseconds-of-day, `correctionStreamId`, `fixQuality` và ECEF. Type `7` giữ nguyên dữ liệu rồi thêm MAC Rover con.
+4. `correctionStreamId` là stream RTCM gần nhất Rover đã ghép/ghi hoàn tất. Base dùng stream cùng GNSS time để không cộng correction sai epoch.
+5. Rover gửi tối đa một snapshot mỗi giây. Telemetry có ưu tiên thấp hơn pairing và RTCM ACK; khi TX bận có thể bỏ snapshot hiện tại, không retry backlog.
+6. Relay có một slot latest-only cho mỗi child và forward round-robin. NVS chỉ lưu MAC pairing, không lưu lịch sử ECEF.
+7. Khi Relay nhận command ID `4`, Relay và các child chạy `CONFIG RTK DISABLE`: ngừng nhận correction nhưng vẫn parse GGA/gửi ECEF để Base quan sát fresh `fix_quality` khác 4/5. Khi Base gửi command ID `5`, Relay fan-out `CONFIG RTK USER_DEFAULTS`; RTCM chỉ được nhận lại sau resume.
 
-Với packet 25 byte ở 1 Hz, ngay cả năm Rover cũng chỉ tạo tải payload 1000 bps trước overhead, nhỏ so với PHY LR 250 Kbps. Mục tiêu vẫn là bảo vệ RTCM: pairing và ACK luôn có ưu tiên cao hơn telemetry. Packet LLH 25/32 byte và command request 44 byte không tương thích với firmware cũ, vì vậy Base, Relay và Rover phải được cập nhật cùng phiên bản.
+Packet v2 không tương thích firmware LLH cũ. Nạp lẫn phiên bản sẽ bị loại ở bước validate `version/length`.
 
 Luồng khởi tạo:
 
@@ -103,7 +97,7 @@ Serial1.write(frame, frameLength) vào UM980/982
 
 ### Chế độ Rover trung gian (Relay mode)
 
-Relay mode được chọn lúc build bằng environment `esp32u_rover_relay`. Protocol RTCM/ACK hiện có không thay đổi và Rover con dùng firmware Normal mode hiện tại. Base hiện dành tối đa 30 slot LLH trong RAM: 5 peer trực tiếp, mỗi peer có thể là Relay với tối đa 5 Rover con.
+Relay mode được chọn lúc build bằng environment `esp32u_rover_relay`. Rover con dùng firmware Normal mode và pair với Relay. Base dành tối đa 30 slot ECEF trong RAM: 5 peer trực tiếp, mỗi peer có thể là Relay với tối đa 5 Rover con.
 
 ```text
 Base đã pair
@@ -340,7 +334,7 @@ Nếu muốn bật lại MQTT:
 
 ### Nhận lệnh đổi UM980 giữa Rover và temporary Base - V1
 
-Rover không cần kết nối MQTT. Base nhận MQTT command rồi gửi ESP-NOW unicast packet type `8` tới Rover trực tiếp đã chọn. Rover chỉ chấp nhận action semantic `switch_to_base_fixed_ecef` hoặc `switch_to_rover` có đúng source MAC Base, `network_id`, COM2, tham số hợp lệ và `auth_tag`; firmware không chạy chuỗi lệnh UART tùy ý từ mạng.
+Rover không cần kết nối MQTT. Base nhận MQTT command rồi gửi ESP-NOW unicast packet type `8` tới Rover trực tiếp đã chọn. Rover chỉ chấp nhận command semantic Fixed ECEF, trở về Rover hoặc reset RTK có đúng source MAC Base, `network_id`, COM2, tham số hợp lệ và `auth_tag`; firmware không chạy chuỗi lệnh UART tùy ý từ mạng.
 
 Khi nhận `switch_to_base_fixed_ecef`, task `GNSS Command` khóa `gnssTxMutex` và ghi 14 bước xuống `Serial1`/UM980 COM2:
 
@@ -361,9 +355,9 @@ Khi nhận `switch_to_base_fixed_ecef`, task `GNSS Command` khóa `gnssTxMutex` 
 14 saveconfig
 ```
 
-Sau mỗi bước Rover cập nhật `completed_step`; sau bước cuối gửi packet result type `9` về Base. Request lặp với cùng source MAC, transaction ID và command ID chỉ gửi lại result gần nhất, không chạy lại chuỗi. Nếu chuyển sang Base thành công, Rover ngừng nhận RTCM correction và ngừng gửi LLH kiểu Rover; COM2 chuyển từ parser NMEA sang parser RTCM uplink cho tới khi nhận `switch_to_rover` thành công hoặc reset.
+Sau mỗi bước Rover cập nhật `completed_step`; sau bước cuối gửi packet result type `9` về Base. Request lặp với cùng source MAC, transaction ID và command ID chỉ gửi lại result gần nhất, không chạy lại chuỗi. Nếu chuyển sang Base thành công, Rover ngừng nhận RTCM correction và ngừng gửi ECEF kiểu Rover; COM2 chuyển từ parser NMEA sang parser RTCM uplink cho tới khi nhận `switch_to_rover` thành công hoặc reset.
 
-Action `switch_to_base_fixed_ecef` dùng command ID `3`. Base chỉ phát lệnh sau khi LLH mới của Rover đạt `fix_quality=4`, chuyển WGS84 LLH với ellipsoidal height sang X/Y/Z và gửi fixed-point millimetre trong request type `8` dài 44 byte. Rover validate biên ECEF/auth rồi ghi chuỗi 14 bước như trên.
+Action `switch_to_base_fixed_ecef` dùng command ID `3`. Base chỉ phát lệnh sau khi ECEF mới của Rover đạt `fix_quality=4`, rồi gửi nguyên X/Y/Z fixed-point scale `10000` trong request type `8` dài 44 byte. Rover validate biên ECEF/auth rồi ghi chuỗi 14 bước như trên.
 
 X/Y/Z được in bốn chữ số thập phân. UM980 nhận biết ECEF khi tham số đầu nằm ngoài miền latitude. Firmware không còn command ID hoặc đường thực thi Base theo thời gian; Base vẫn yêu cầu fixed guard 3000 ms và hai chu kỳ RTCM đầy đủ trước khi chuyển nguồn.
 
@@ -371,7 +365,9 @@ Tham chiếu cú pháp: [Unicore N4 High Precision Commands Manual](https://en.u
 
 Temporary Base không phát RTCM trực tiếp tới Rover khác. Firmware tách RTCM3 từ luồng COM2, kiểm preamble/length/CRC24Q rồi đưa frame vào queue 3 phần tử ưu tiên dữ liệu mới. Mỗi frame được chia payload tối đa 234 byte và unicast về đúng `base_mac` đã pair bằng packet type `10 = TEMP_RTCM_DATA`; Base trả type `11 = TEMP_RTCM_ACK` theo `streamId + frameSequence`. Uplink retry fragment tối đa 3 attempt và retry nguyên frame một lần. ACK hop này độc lập với ACK correction thông thường từ Rover về Base.
 
-Khi Base gốc đang ở `TEMP_PREPARING`, correction local vẫn phục vụ các Rover khác. Base chỉ chuyển `TEMP_ACTIVE` sau fixed guard 3000 ms và hai chu kỳ đủ `1006/1074/1084/1094/1124`; Temporary Base vẫn không cần route map. Khi uplink mất ACK hoặc queue nghẽn, counter `[TEMP_BASE][UPLINK][HEALTH]` cho biết `dropped`, `queue_overflow`, `fragment_fail`, `ack_timeout`.
+Khi Base gốc đang ở `TEMP_PREPARING`, correction local vẫn phục vụ các Rover khác. Sau fixed guard 3000 ms và hai chu kỳ đủ `1006/1074/1084/1094/1124`, Base vào `TEMP_RESETTING`: dừng RTCM cũ và gửi command ID `4`. Rover chạy `config rtk disable`, xóa snapshot GGA/ECEF cũ, giữ parser GGA/ECEF hoạt động nhưng chặn ghi RTCM xuống COM2; chỉ fresh status non-RTK sau ACK mới mở gate. Khi cohort hoàn tất, command ID `5` chạy `config rtk user_defaults`; Base chỉ bật RTCM của nhánh sau ACK resume rồi vào `TEMP_ACTIVE`.
+
+Trong Relay mode, cả command DISABLE và RESUME được fan-out tới toàn bộ child đã pair. Relay chỉ xác nhận gửi request thành công; Base vẫn đợi status riêng của từng MAC con để phát hiện child không rời trạng thái RTK hoặc mất nguồn.
 
 Action `switch_to_rover` ghi 4 bước để hoàn nguyên:
 
@@ -382,9 +378,9 @@ Action `switch_to_rover` ghi 4 bước để hoàn nguyên:
 4 saveconfig
 ```
 
-Sau khi ghi thành công, Rover hạ cờ `promoted_to_base`, mở lại parser NMEA/LLH và trả result `4/4`; Base nhận result rồi bật lại gửi RTCM. Cú pháp này yêu cầu UM980 Build7923+ hoặc UM982 Build7650+ theo Commands Manual N4 của Unicore.
+Sau khi ghi thành công, Rover hạ cờ `promoted_to_base`, mở lại parser NMEA/ECEF và trả result `4/4`; Base nhận result rồi bật lại gửi RTCM. Cú pháp này yêu cầu UM980 Build7923+ hoặc UM982 Build7650+ theo Commands Manual N4 của Unicore.
 
-Giới hạn V1: `uart_sequence_written` chỉ xác nhận ESP32 đã ghi đủ byte xuống UART, chưa parse phản hồi `OK/ERROR` của UM980 và chưa xác nhận survey-in hoàn tất. Việc xác nhận nguồn sẵn sàng do Base gốc thực hiện từ thời gian survey và tập message RTCM nhận được. Trạng thái đổi vai trò chỉ nằm trong RAM; reset sẽ trở về Rover. Lệnh không dùng `FRESET`.
+Giới hạn V1: `uart_sequence_written` chỉ xác nhận ESP32 đã ghi đủ byte xuống UART, chưa parse phản hồi `OK/ERROR` của UM980. Việc xác nhận temp source sẵn sàng do Base gốc thực hiện từ tập RTCM nhận được. Trạng thái đổi vai trò chỉ nằm trong RAM; reset ESP32 sẽ trở về Rover. Firmware không dùng `FRESET`.
 
 ### Debug web SoftAP tùy chọn
 
@@ -724,7 +720,7 @@ Kiểm tra thêm với Relay mode:
 9. [x] Triển khai Base-side pairing packet theo đúng struct/auth tag của Rover.
 10. [ ] Kiểm thử pairing 1 Base - 1 Rover trên phần cứng, reset nguồn hai bên và xác nhận normal mode tự dùng MAC đã lưu.
 11. [ ] Kiểm thử pair lần lượt 1 Base - nhiều Rover; Base hiện hỗ trợ lưu tối đa 5 Rover và gửi RTCM multi-unicast.
-12. [ ] Sau khi pairing ổn định, cân nhắc runtime protocol v2 để thêm `network_id` vào data/ACK header.
+12. [x] Nâng runtime protocol lên v2 cho telemetry ECEF và command reset đồng bộ.
 12. [ ] Provision PMK/LMK và bật `ESPNOW_ENCRYPTION_ENABLED` khi triển khai bảo mật.
 13. [ ] Kiểm thử end-to-end Base repo riêng → ESP32U Rover → UM980/982.
 14. [ ] Đo tầm xa LR 250 Kbps, sau đó thử LR 500 Kbps nếu cần.
@@ -734,9 +730,11 @@ Kiểm tra thêm với Relay mode:
 18. [ ] Kiểm thử phần cứng `Base → Relay → 5 Child`, bao gồm reset nguồn và tự nạp lại cả `base_mac`/danh sách child.
 19. [ ] Kiểm thử mất nguồn/mất sóng lần lượt từng Rover con để xác nhận upstream và các child còn lại vẫn hoạt động, cooldown/health downstream báo đúng.
 20. [x] Triển khai V1 nhận lệnh ESP-NOW từ Base để cấu hình UM980 thành Temporary Base Fixed ECEF qua COM2 và trả application result.
-21. [x] Thêm action `switch_to_rover` với chuỗi 4 lệnh COM2 và đồng bộ bật lại RTCM/LLH sau application result.
+21. [x] Thêm action `switch_to_rover` với chuỗi 4 lệnh COM2 và đồng bộ bật lại RTCM/ECEF sau application result.
 22. [x] Triển khai Temporary Base parser RTCM trên COM2, queue/retry/ACK uplink một hop về Base gốc; không phát correction trực tiếp tới Rover khác.
-23. [x] Bổ sung ellipsoidal height từ GGA và command ID `3` để cấu hình Temporary Base bằng ECEF từ LLH RTK Fixed.
+23. [x] Bổ sung ellipsoidal height từ GGA và command ID `3` để cấu hình Temporary Base bằng ECEF RTK Fixed.
+24. [x] Telemetry type `6/7` chỉ dùng ECEF scale `10000`, GNSS time và correction stream ID.
+25. [x] Command ID `4` giữ RTK bằng `CONFIG RTK DISABLE`; command ID `5` resume bằng `CONFIG RTK USER_DEFAULTS`. Relay fan-out cả hai lệnh tới mọi child đã pair.
 
 ## Kết quả kiểm tra phần mềm gần nhất
 
@@ -756,6 +754,20 @@ Kiểm tra thêm với Relay mode:
 - Đã loại bỏ hoàn toàn command Base theo thời gian, trường duration và lệnh `MODE BASE TIME`; allowlist runtime chỉ còn Fixed ECEF và trở về Rover. Packet cũ bị từ chối.
 - Build ECEF-only Normal SUCCESS: RAM 47.736 byte (14,6%), Flash 798.553 byte (60,9%). Build Relay SUCCESS: RAM 48.408 byte (14,8%), Flash 820.053 byte (62,6%). Native protocol test **8/8 PASSED**.
 - Chưa kiểm thử lệnh fixed ECEF và handover trên UM980 thật; cần nạp đồng bộ Base, Relay và toàn bộ Rover vì wire packet đã đổi kích thước.
+
+### Cập nhật 2026-07-24
+
+- [x] Nâng protocol lên version `2`: `ROVER_ECEF_STATUS` dài 40 byte, `RELAYED_ROVER_ECEF_STATUS` dài 48 byte, ECEF `int64_t` scale `10000`.
+- [x] GGA parser thêm GNSS milliseconds-of-day; ECEF dùng WGS84 và ellipsoidal height, lượng tử ở `0,0001 m`.
+- [x] Telemetry gửi `correctionStreamId` để Base chỉ hiệu chỉnh Rover đang dùng đúng RTCM stream/epoch.
+- [x] Đổi command ID `4` sang `config rtk disable`, xóa snapshot cũ và đặt `rtk_correction_held=1`; Rover vẫn parse GGA và gửi ECEF non-RTK nhưng từ chối ghi RTCM cũ xuống COM2.
+- [x] Thêm command ID `5` chạy `config rtk user_defaults`, bỏ hold và chỉ nhận RTCM sau khi Base nhận application result.
+- [x] Thêm `rtk_correction_held` vào Serial health và web debug Normal/Relay để quan sát trực tiếp hai pha DISABLE/RESUME.
+- [x] Relay fan-out cả DISABLE/RESUME có auth tới tối đa 5 child; Base đợi fresh non-RTK status riêng từng child trước handover.
+- [x] Build Normal SUCCESS: RAM 47.788/327.680 byte (14,6%), Flash 806.025/1.310.720 byte (61,5%).
+- [x] Build Relay SUCCESS: RAM 48.532/327.680 byte (14,8%), Flash 828.989/1.310.720 byte (63,2%).
+- [x] Native protocol test 8/8 PASSED.
+- [ ] Chưa kiểm thử handover/reset cohort và correction ECEF end-to-end trên UM980 thật.
 
 ### Cập nhật 2026-07-21
 

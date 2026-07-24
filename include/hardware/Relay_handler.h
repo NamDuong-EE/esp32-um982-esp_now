@@ -71,6 +71,8 @@ bool relayProcessNextLlh(TickType_t waitTicks);
 bool relayHandleReceivedPacket(const uint8_t* sourceMac,
                                const uint8_t* data,
                                int length);
+bool relayRequestChildrenRtkReset(uint32_t parentTransactionId);
+bool relayRequestChildrenRtkResume(uint32_t parentTransactionId);
 RelayStats relayGetStats();
 bool relayGetChildMac(uint8_t mac[6]);
 size_t relayCopyChildren(RelayChildStatus* destination, size_t capacity);

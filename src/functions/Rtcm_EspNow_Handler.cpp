@@ -194,3 +194,7 @@ bool processNextRtcmEspNowPacket(TickType_t waitTicks) {
     clearActiveFrame();
     return true;
 }
+
+uint16_t getLastCompletedRtcmStreamId() {
+    return haveLastCompletedFrame ? lastCompletedStreamId : 0;
+}

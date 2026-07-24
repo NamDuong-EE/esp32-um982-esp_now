@@ -6,5 +6,6 @@
 
 void resetRtcmEspNowReassembly();
 bool processNextRtcmEspNowPacket(TickType_t waitTicks);
+uint16_t getLastCompletedRtcmStreamId();
 
 #endif

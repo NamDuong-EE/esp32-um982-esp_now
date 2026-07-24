@@ -31,7 +31,7 @@ struct RelayAckEvent {
 };
 
 struct RelayChildLlhSlot {
-    rtcm_espnow::RoverLlhStatusPacket packet;
+    rtcm_espnow::RoverEcefStatusPacket packet;
     bool pending;
 };
 
@@ -910,7 +910,7 @@ bool relayProcessNextLlh(TickType_t waitTicks) {
         return false;
     }
 
-    rtcm_espnow::RoverLlhStatusPacket childPacket{};
+    rtcm_espnow::RoverEcefStatusPacket childPacket{};
     uint8_t sourceChildMac[6] = {};
     size_t selectedIndex = RELAY_MAX_CHILDREN;
     portENTER_CRITICAL(&relayMux);
@@ -951,18 +951,21 @@ bool relayProcessNextLlh(TickType_t waitTicks) {
         return false;
     }
 
-    rtcm_espnow::RelayedRoverLlhStatusPacket forwarded{};
+    rtcm_espnow::RelayedRoverEcefStatusPacket forwarded{};
     forwarded.common.magic = rtcm_espnow::MAGIC;
     forwarded.common.version = rtcm_espnow::VERSION;
-    forwarded.common.packetType = rtcm_espnow::PACKET_TYPE_RELAYED_ROVER_LLH_STATUS;
+    forwarded.common.packetType =
+        rtcm_espnow::PACKET_TYPE_RELAYED_ROVER_ECEF_STATUS;
     forwarded.sequence = childPacket.sequence;
     std::memcpy(forwarded.roverMac, sourceChildMac, sizeof(forwarded.roverMac));
-    forwarded.latitudeE7 = childPacket.latitudeE7;
-    forwarded.longitudeE7 = childPacket.longitudeE7;
-    forwarded.heightMm = childPacket.heightMm;
-    forwarded.ellipsoidHeightMm = childPacket.ellipsoidHeightMm;
+    forwarded.gnssTimeMsOfDay = childPacket.gnssTimeMsOfDay;
+    forwarded.correctionStreamId = childPacket.correctionStreamId;
+    forwarded.ecefXScaled = childPacket.ecefXScaled;
+    forwarded.ecefYScaled = childPacket.ecefYScaled;
+    forwarded.ecefZScaled = childPacket.ecefZScaled;
     forwarded.fixQuality = childPacket.fixQuality;
-    if (!rtcm_espnow::validateRelayedRoverLlhStatus(forwarded, sizeof(forwarded))) {
+    if (!rtcm_espnow::validateRelayedRoverEcefStatus(forwarded,
+                                                     sizeof(forwarded))) {
         incrementStat(&RelayStats::childLlhForwardFailures);
         portENTER_CRITICAL(&relayMux);
         if (selectedIndex < childCount) {
@@ -1037,15 +1040,16 @@ bool relayHandleReceivedPacket(const uint8_t* sourceMac,
     }
 
     const size_t sourceChildIndex = findChildIndex(sourceMac);
-    if (common.packetType == rtcm_espnow::PACKET_TYPE_ROVER_LLH_STATUS &&
+    if (common.packetType == rtcm_espnow::PACKET_TYPE_ROVER_ECEF_STATUS &&
         sourceChildIndex < RELAY_MAX_CHILDREN) {
-        if (length != static_cast<int>(sizeof(rtcm_espnow::RoverLlhStatusPacket))) {
+        if (length !=
+            static_cast<int>(sizeof(rtcm_espnow::RoverEcefStatusPacket))) {
             incrementStat(&RelayStats::childLlhInvalid);
             return true;
         }
-        rtcm_espnow::RoverLlhStatusPacket packet{};
+        rtcm_espnow::RoverEcefStatusPacket packet{};
         std::memcpy(&packet, data, sizeof(packet));
-        if (!rtcm_espnow::validateRoverLlhStatus(packet, sizeof(packet))) {
+        if (!rtcm_espnow::validateRoverEcefStatus(packet, sizeof(packet))) {
             incrementStat(&RelayStats::childLlhInvalid);
             return true;
         }
@@ -1092,6 +1096,82 @@ bool relayHandleReceivedPacket(const uint8_t* sourceMac,
         xQueueSend(relayAckQueue, &event, 0);
     }
     return true;
+}
+
+bool relayRequestChildrenRtkReset(uint32_t parentTransactionId) {
+    if (!ROVER_RELAY_MODE || !relayReady || parentTransactionId == 0) {
+        return false;
+    }
+    RelayChildStatus children[RELAY_MAX_CHILDREN] = {};
+    const size_t count = copyChildren(children, RELAY_MAX_CHILDREN);
+    bool allSent = true;
+    for (size_t index = 0; index < count; ++index) {
+        rtcm_espnow::GnssCommandRequestPacket request{};
+        request.common.magic = rtcm_espnow::MAGIC;
+        request.common.version = rtcm_espnow::VERSION;
+        request.common.packetType =
+            rtcm_espnow::PACKET_TYPE_GNSS_COMMAND_REQUEST;
+        request.networkId = ESPNOW_NETWORK_ID;
+        request.transactionId =
+            parentTransactionId ^ (0x524C0000UL |
+                                   static_cast<uint32_t>(index + 1));
+        request.commandId = rtcm_espnow::GNSS_COMMAND_RESET_RTK;
+        request.targetPort = rtcm_espnow::GNSS_PORT_COM2;
+        request.authTag = rtcm_espnow::pairingAuthTag(
+            request,
+            ESPNOW_PAIRING_KEY,
+            sizeof(ESPNOW_PAIRING_KEY));
+        const EspNowTxResult result = espnowTxSend(
+            children[index].mac,
+            reinterpret_cast<const uint8_t*>(&request),
+            sizeof(request));
+        const bool sent = result == EspNowTxResult::Success;
+        allSent = allSent && sent;
+        Serial.printf("[RELAY][GNSS_CMD] child=%s action=rtk_reset "
+                      "txn=%lu result=%s\n",
+                      macToString(children[index].mac).c_str(),
+                      static_cast<unsigned long>(request.transactionId),
+                      espnowTxResultToString(result));
+    }
+    return allSent;
+}
+
+bool relayRequestChildrenRtkResume(uint32_t parentTransactionId) {
+    if (!ROVER_RELAY_MODE || !relayReady || parentTransactionId == 0) {
+        return false;
+    }
+    RelayChildStatus children[RELAY_MAX_CHILDREN] = {};
+    const size_t count = copyChildren(children, RELAY_MAX_CHILDREN);
+    bool allSent = true;
+    for (size_t index = 0; index < count; ++index) {
+        rtcm_espnow::GnssCommandRequestPacket request{};
+        request.common.magic = rtcm_espnow::MAGIC;
+        request.common.version = rtcm_espnow::VERSION;
+        request.common.packetType =
+            rtcm_espnow::PACKET_TYPE_GNSS_COMMAND_REQUEST;
+        request.networkId = ESPNOW_NETWORK_ID;
+        request.transactionId =
+            parentTransactionId ^ (0x52530000UL |
+                                   static_cast<uint32_t>(index + 1));
+        request.commandId = rtcm_espnow::GNSS_COMMAND_RESUME_RTK;
+        request.targetPort = rtcm_espnow::GNSS_PORT_COM2;
+        request.authTag = rtcm_espnow::pairingAuthTag(
+            request,
+            ESPNOW_PAIRING_KEY,
+            sizeof(ESPNOW_PAIRING_KEY));
+        const EspNowTxResult result = espnowTxSend(
+            children[index].mac,
+            reinterpret_cast<const uint8_t*>(&request),
+            sizeof(request));
+        const bool sent = result == EspNowTxResult::Success;
+        allSent = allSent && sent;
+        Serial.printf("[RELAY][GNSS_CMD] child=%s action=rtk_resume "
+                      "txn=%lu result=%s\n",
+                      macToString(children[index].mac).c_str(),
+                      static_cast<unsigned long>(request.transactionId),
+                      espnowTxResultToString(result));
+    }
+    return allSent;
 }
 
 RelayStats relayGetStats() {

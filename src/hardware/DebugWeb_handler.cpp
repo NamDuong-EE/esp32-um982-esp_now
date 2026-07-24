@@ -9,6 +9,7 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 
+#include "functions/Gnss_Command_Handler.h"
 #include "hardware/Relay_handler.h"
 #include "helper.h"
 
@@ -27,7 +28,7 @@ const char NORMAL_INDEX_HTML[] PROGMEM = R"HTML(
 </style></head><body><main><h1>ESP32 Rover Debug</h1><p class="sub">Normal mode · 192.168.4.1</p>
 <section class="grid"><div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div><div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div><div class="card"><div class="label">Height</div><div id="height" class="value">--</div></div><div class="card"><div class="label">Fix quality</div><div id="fix" class="value">--</div></div><div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div></section>
 <section class="health"><table><tbody id="health"></tbody></table></section></main><script>
-const fields=["espnow_ready","base_provisioned","pairing_active","pair_confirm_ok","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
+const fields=["espnow_ready","base_provisioned","pairing_active","pair_confirm_ok","rtk_correction_held","rtcm_frames","last_rtcm_age_ms","rtcm_crc_errors","rtcm_queue_overflow","rtcm_sequence_gaps","ack_queued","ack_send_fail","free_heap_bytes"];
 const text=v=>v===null||v===undefined?"--":v;
 async function refresh(){try{const d=await(await fetch('/api/status',{cache:'no-store'})).json();lat.textContent=d.gga.valid?d.gga.lat.toFixed(7):'--';lon.textContent=d.gga.valid?d.gga.lon.toFixed(7):'--';height.textContent=d.gga.valid?d.gga.height_m.toFixed(3)+' m':'--';fix.textContent=d.gga.valid?d.gga.fix_quality:'--';fix.className='value '+(d.gga.fix_quality===4?'ok':d.gga.fix_quality===5?'warn':'bad');sats.textContent=d.gga.valid?d.gga.satellites:'--';health.innerHTML=fields.map(k=>`<tr><td>${k}</td><td>${text(d.health[k])}</td></tr>`).join('')}catch(e){health.innerHTML='<tr><td>status</td><td>offline</td></tr>'}}refresh();setInterval(refresh,1000);
 </script></body></html>)HTML";
@@ -39,7 +40,7 @@ const char RELAY_INDEX_HTML[] PROGMEM = R"HTML(
 </style></head><body><main><h1>ESP32 Rover Relay</h1><p class="sub">Relay mode · 192.168.4.1</p>
 <section class="grid"><div class="card"><div class="label">Latitude</div><div id="lat" class="value">--</div></div><div class="card"><div class="label">Longitude</div><div id="lon" class="value">--</div></div><div class="card"><div class="label">Height</div><div id="height" class="value">--</div></div><div class="card"><div class="label">Fix quality</div><div id="fix" class="value">--</div></div><div class="card"><div class="label">Satellites</div><div id="sats" class="value">--</div></div></section>
 <div class="columns"><section><h2>Upstream · Base → Relay</h2><table><tbody id="upstream"></tbody></table></section><section><h2>Downstream · Relay → Child</h2><table><tbody id="downstream"></tbody></table></section></div></main><script>
-const up=["paired","mac","pairing_active","frames_received","crc_errors","queue_overflow","acks_sent","last_rtcm_age_ms"];
+const up=["paired","mac","pairing_active","rtk_correction_held","frames_received","crc_errors","queue_overflow","acks_sent","last_rtcm_age_ms"];
 const down=["paired","mac","pairing_active","frames_queued","frames_sent","frames_acked","fragments_sent","frame_retries","ack_timeouts","send_failures","send_immediate_errors","send_callback_timeouts","send_delivery_failures","backoff_events","frames_without_child","frames_suppressed_pairing","last_ack_age_ms"];
 const text=v=>v===null||v===undefined||v===''?'--':v;const rows=(o,keys)=>keys.map(k=>`<tr><td>${k}</td><td>${text(o[k])}</td></tr>`).join('');
 async function refresh(){try{const d=await(await fetch('/api/relay/status',{cache:'no-store'})).json();lat.textContent=d.device.gga_valid?d.device.lat.toFixed(7):'--';lon.textContent=d.device.gga_valid?d.device.lon.toFixed(7):'--';height.textContent=d.device.gga_valid?d.device.height_m.toFixed(3)+' m':'--';fix.textContent=d.device.gga_valid?d.device.fix_quality:'--';fix.className='value '+(d.device.fix_quality===4?'ok':d.device.fix_quality===5?'warn':'bad');sats.textContent=d.device.gga_valid?d.device.satellites:'--';upstream.innerHTML=rows(d.upstream,up);downstream.innerHTML=rows(d.downstream,down)}catch(e){upstream.innerHTML='<tr><td>status</td><td>offline</td></tr>';downstream.innerHTML=''}}refresh();setInterval(refresh,1000);
@@ -79,6 +80,7 @@ void handleRelayIndex() {
 void handleNormalStatus() {
     const GgaDebugSnapshot gga = getGgaDebugSnapshot();
     const EspNowRtcmStats s = espnowGetStats();
+    const GnssCommandStats command = gnssCommandGetStats();
     const uint32_t now = millis();
     uint8_t baseMac[6] = {};
     const bool hasBase = espnowGetBaseMac(baseMac);
@@ -94,6 +96,8 @@ void handleNormalStatus() {
     payload += ",\"base_mac\":\"" + macText(baseMac, hasBase) + "\"";
     payload += ",\"pairing_active\":" + String(s.pairingActive ? "true" : "false");
     payload += ",\"pair_confirm_ok\":" + String(s.pairConfirmsAccepted);
+    payload += ",\"rtk_correction_held\":" +
+               String(command.rtkCorrectionHeld ? "true" : "false");
     payload += ",\"rtcm_frames\":" + String(s.framesWritten);
     payload += ",\"rtcm_crc_errors\":" + String(s.crcErrors);
     payload += ",\"rtcm_queue_overflow\":" + String(s.queueOverflow);
@@ -109,6 +113,7 @@ void handleNormalStatus() {
 void handleRelayStatus() {
     const GgaDebugSnapshot gga = getGgaDebugSnapshot();
     const EspNowRtcmStats upstream = espnowGetStats();
+    const GnssCommandStats command = gnssCommandGetStats();
     const RelayStats downstream = relayGetStats();
     RelayChildStatus children[RELAY_MAX_CHILDREN] = {};
     const size_t childCount = relayCopyChildren(children, RELAY_MAX_CHILDREN);
@@ -132,6 +137,8 @@ void handleRelayStatus() {
     payload += "\"paired\":" + String(hasBase ? "true" : "false");
     payload += ",\"mac\":\"" + macText(baseMac, hasBase) + "\"";
     payload += ",\"pairing_active\":" + String(upstream.pairingActive ? "true" : "false");
+    payload += ",\"rtk_correction_held\":" +
+               String(command.rtkCorrectionHeld ? "true" : "false");
     payload += ",\"frames_received\":" + String(upstream.framesWritten);
     payload += ",\"crc_errors\":" + String(upstream.crcErrors);
     payload += ",\"queue_overflow\":" + String(upstream.queueOverflow);

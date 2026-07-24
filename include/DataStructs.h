@@ -6,6 +6,7 @@ typedef struct {
   double lon;
   double height_m;
   double geoid_separation_m;
+  uint32_t gnss_time_ms_of_day;
   String fix_quality;
   String satellites;
 } gga_data_struct;
