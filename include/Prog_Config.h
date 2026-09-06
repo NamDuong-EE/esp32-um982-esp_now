@@ -6,6 +6,24 @@
 
 #include "Top_Lvl_Config.h"
 
+#if __has_include("EspNow_Secrets.h")
+#include "EspNow_Secrets.h"
+#endif
+
+#ifndef ESPNOW_SECURITY_ENABLED
+#define ESPNOW_SECURITY_ENABLED 0
+#endif
+#ifndef ESPNOW_PMK_BYTES
+#define ESPNOW_PMK_BYTES \
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+#endif
+#ifndef ESPNOW_LMK_BYTES
+#define ESPNOW_LMK_BYTES \
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+#endif
+
 // ================= UART UM980/UM982 =================
 // ESP32-WROOM-32U/ESP32U defaults. Change these two pins to match the PCB.
 inline constexpr int RX_GNSS = 16; // UM980 TX -> ESP32 RX
@@ -18,7 +36,7 @@ inline constexpr int LED_PIN = 2;
 inline constexpr uint32_t MUTEX_TIMEOUT_MS = 1500;
 inline constexpr uint32_t HEALTH_INTERVAL_MS = 30000;
 #ifndef SERIAL_DEBUG_STATUS_ENABLED
-#define SERIAL_DEBUG_STATUS_ENABLED 1
+#define SERIAL_DEBUG_STATUS_ENABLED 0
 #endif
 inline constexpr bool SERIAL_DEBUG_STATUS_OUTPUT_ENABLED =
     SERIAL_DEBUG_STATUS_ENABLED != 0;
@@ -30,6 +48,11 @@ inline constexpr uint32_t GNSS_COMMAND_UART_LOCK_TIMEOUT_MS = 2000;
 inline constexpr uint32_t GNSS_COMMAND_UNLOG_DELAY_MS = 1000;
 inline constexpr uint32_t GNSS_COMMAND_MODE_DELAY_MS = 2000;
 inline constexpr uint32_t GNSS_COMMAND_OUTPUT_DELAY_MS = 200;
+inline constexpr uint32_t GNSS_COMMAND_RESPONSE_TIMEOUT_MS = 2500;
+inline constexpr uint32_t GNSS_COMMAND_SAVECONFIG_SETTLE_MS = 1000;
+inline constexpr uint32_t GNSS_COMMAND_RESET_BOOT_TIMEOUT_MS = 15000;
+inline constexpr uint32_t GNSS_COMMAND_MODE_QUERY_INTERVAL_MS = 1000;
+inline constexpr uint32_t GNSS_COMMAND_GGA_VERIFY_TIMEOUT_MS = 10000;
 
 // ================= OPERATING MODE =================
 // Override from PlatformIO with -D ROVER_RELAY_MODE_ENABLED=1 to build the
@@ -128,29 +151,39 @@ inline constexpr uint8_t RELAY_FRAGMENT_SEND_RETRY_COUNT = 2;
 inline constexpr uint32_t RELAY_FRAGMENT_GAP_MS = 5;
 inline constexpr uint32_t RELAY_FAILED_FRAME_BACKOFF_MS = 1000;
 inline constexpr uint32_t RELAY_DISCOVERY_INTERVAL_MS = 500;
+inline constexpr uint32_t RELAY_CHILD_ACK_STATUS_INTERVAL_MS = 5000;
 inline constexpr uint32_t RELAY_CHILD_CLEAR_HOLD_MS = 20000;
 inline constexpr uint8_t RELAY_CHILD_FAILURES_BEFORE_COOLDOWN = 2;
 inline constexpr uint32_t RELAY_CHILD_FAILURE_COOLDOWN_MS = 3000;
 
-// Enable only after replacing both keys on Base and Rover with the same provisioned values.
-inline constexpr bool ESPNOW_ENCRYPTION_ENABLED = false;
-inline constexpr uint8_t ESPNOW_PMK[16] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
-inline constexpr uint8_t ESPNOW_LMK[16] = {
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
+// The real PMK/LMK come from the ignored EspNow_Secrets.h provisioned with Base.
+inline constexpr bool ESPNOW_ENCRYPTION_ENABLED = ESPNOW_SECURITY_ENABLED != 0;
+inline constexpr uint8_t ESPNOW_PMK[16] = {ESPNOW_PMK_BYTES};
+inline constexpr uint8_t ESPNOW_LMK[16] = {ESPNOW_LMK_BYTES};
+
+inline constexpr bool espnowSecurityKeyIsProvisioned(const uint8_t (&key)[16]) {
+    bool anyNonZero = false;
+    bool anyNotFf = false;
+    bool anyDifferent = false;
+    for (std::size_t index = 0; index < sizeof(key); ++index) {
+        anyNonZero = anyNonZero || key[index] != 0x00;
+        anyNotFf = anyNotFf || key[index] != 0xFF;
+        anyDifferent = anyDifferent || key[index] != key[0];
+    }
+    return anyNonZero && anyNotFf && anyDifferent;
+}
 
 inline constexpr bool espnowSecurityKeysAreConfigured() {
-    bool pmkConfigured = false;
-    bool lmkConfigured = false;
+    bool keysAreDistinct = false;
     for (std::size_t index = 0; index < sizeof(ESPNOW_PMK); ++index) {
-        pmkConfigured = pmkConfigured || ESPNOW_PMK[index] != 0;
-        lmkConfigured = lmkConfigured || ESPNOW_LMK[index] != 0;
+        keysAreDistinct = keysAreDistinct || ESPNOW_PMK[index] != ESPNOW_LMK[index];
     }
-    return pmkConfigured && lmkConfigured;
+    return espnowSecurityKeyIsProvisioned(ESPNOW_PMK) &&
+           espnowSecurityKeyIsProvisioned(ESPNOW_LMK) &&
+           keysAreDistinct;
 }
+
+static_assert(!ESPNOW_ENCRYPTION_ENABLED || espnowSecurityKeysAreConfigured(),
+              "ESP-NOW encryption requires distinct provisioned 16-byte PMK/LMK values");
 
 #endif

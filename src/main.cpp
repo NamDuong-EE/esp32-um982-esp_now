@@ -158,7 +158,7 @@ void gnssParseTask(void* parameter) {
     currentLine.reserve(512);
 
     while (true) {
-        if (!gnssCommandPublishesRoverStatus()) {
+        if (gnssCommandRoutesGnssToTemporaryBase()) {
             while (Serial1.available()) {
                 const int value = Serial1.read();
                 if (value >= 0) {
@@ -173,6 +173,7 @@ void gnssParseTask(void* parameter) {
             const char value = static_cast<char>(Serial1.read());
             if (value == '\n') {
                 currentLine += value;
+                gnssCommandObserveLine(currentLine.c_str(), currentLine.length());
                 if (xSemaphoreTake(nmeaBufferMutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
                     gnssLineBuffer = currentLine;
                     xSemaphoreGive(nmeaBufferMutex);
@@ -231,7 +232,9 @@ void healthCheckTask(void* parameter) {
             Serial.printf(
                 "[ROVER][GNSS_CMD][HEALTH] rx=%lu invalid=%lu queue_overflow=%lu "
                 "duplicate=%lu completed=%lu result_sent=%lu result_fail=%lu "
-                "uart_fail=%lu promoted_to_base=%u rtk_correction_held=%u\n",
+                "uart_fail=%lu response_timeout=%lu response_rejected=%lu "
+                "mode_verify_fail=%lu gga_verify_fail=%lu persistence_fail=%lu "
+                "promoted_to_base=%u transitioning=%u rtk_correction_held=%u\n",
                 static_cast<unsigned long>(command.requestsReceived),
                 static_cast<unsigned long>(command.requestsInvalid),
                 static_cast<unsigned long>(command.queueOverflow),
@@ -240,7 +243,13 @@ void healthCheckTask(void* parameter) {
                 static_cast<unsigned long>(command.resultsSent),
                 static_cast<unsigned long>(command.resultSendFailures),
                 static_cast<unsigned long>(command.uartWriteFailures),
+                static_cast<unsigned long>(command.responseTimeouts),
+                static_cast<unsigned long>(command.responseRejected),
+                static_cast<unsigned long>(command.modeVerifyFailures),
+                static_cast<unsigned long>(command.ggaVerifyFailures),
+                static_cast<unsigned long>(command.persistenceVerifyFailures),
                 command.promotedToBase ? 1U : 0U,
+                command.roleTransitionActive ? 1U : 0U,
                 command.rtkCorrectionHeld ? 1U : 0U);
             Serial.printf(
                 "[TEMP_BASE][UPLINK][HEALTH] enabled=%u uart_bytes=%lu parsed=%lu "
@@ -314,6 +323,7 @@ void relaySendTask(void* parameter) {
             continue;
         }
         relayProcessNextFrame(pdMS_TO_TICKS(20));
+        relayProcessNextAckStatus();
         relayProcessNextLlh(pdMS_TO_TICKS(20));
     }
 }

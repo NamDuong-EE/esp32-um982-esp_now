@@ -19,6 +19,7 @@ inline constexpr uint8_t PACKET_TYPE_GNSS_COMMAND_REQUEST = 8;
 inline constexpr uint8_t PACKET_TYPE_GNSS_COMMAND_RESULT = 9;
 inline constexpr uint8_t PACKET_TYPE_TEMP_RTCM_DATA = 10;
 inline constexpr uint8_t PACKET_TYPE_TEMP_RTCM_ACK = 11;
+inline constexpr uint8_t PACKET_TYPE_RELAYED_ROVER_RTCM_ACK_STATUS = 12;
 inline constexpr uint8_t ROLE_BASE = 1;
 inline constexpr uint8_t ROLE_ROVER = 2;
 inline constexpr uint8_t GNSS_COMMAND_SWITCH_TO_ROVER = 2;
@@ -26,7 +27,9 @@ inline constexpr uint8_t GNSS_COMMAND_SWITCH_TO_BASE_FIXED_ECEF = 3;
 inline constexpr uint8_t GNSS_COMMAND_RESET_RTK = 4;
 inline constexpr uint8_t GNSS_COMMAND_RESUME_RTK = 5;
 inline constexpr uint8_t GNSS_PORT_COM2 = 2;
-inline constexpr uint8_t GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN = 1;
+inline constexpr uint8_t GNSS_COMMAND_STATUS_VERIFIED = 1;
+inline constexpr uint8_t GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN =
+    GNSS_COMMAND_STATUS_VERIFIED; // Backward-compatible wire alias.
 inline constexpr uint8_t GNSS_COMMAND_STATUS_REJECTED = 2;
 inline constexpr uint8_t GNSS_COMMAND_STATUS_UART_ERROR = 3;
 inline constexpr uint8_t GNSS_COMMAND_STATUS_BUSY = 4;
@@ -34,6 +37,11 @@ inline constexpr uint16_t GNSS_COMMAND_DETAIL_NONE = 0;
 inline constexpr uint16_t GNSS_COMMAND_DETAIL_INVALID_REQUEST = 1;
 inline constexpr uint16_t GNSS_COMMAND_DETAIL_QUEUE_FULL = 2;
 inline constexpr uint16_t GNSS_COMMAND_DETAIL_UART_WRITE = 3;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_RESPONSE_TIMEOUT = 4;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_RESPONSE_REJECTED = 5;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_MODE_VERIFY = 6;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_GGA_VERIFY = 7;
+inline constexpr uint16_t GNSS_COMMAND_DETAIL_PERSISTENCE_VERIFY = 8;
 inline constexpr uint8_t ACK_STATUS_WRITTEN = 1;
 inline constexpr double ECEF_SCALE = 10000.0;
 inline constexpr int64_t ECEF_SCALED_LIMIT = 70000000000LL;
@@ -96,6 +104,14 @@ struct RelayedRoverEcefStatusPacket {
     int64_t ecefXScaled;
     int64_t ecefYScaled;
     int64_t ecefZScaled;
+};
+
+struct RelayedRoverRtcmAckStatusPacket {
+    EspNowCommonHeader common;
+    uint8_t roverMac[6];
+    uint16_t streamId;
+    uint32_t frameSequence;
+    uint32_t ackAgeMs;
 };
 
 struct GnssCommandRequestPacket {
@@ -164,6 +180,8 @@ static_assert(sizeof(RoverEcefStatusPacket) == 40,
               "ROVER_ECEF_STATUS must be 40 bytes");
 static_assert(sizeof(RelayedRoverEcefStatusPacket) == 48,
               "RELAYED_ROVER_ECEF_STATUS must be 48 bytes");
+static_assert(sizeof(RelayedRoverRtcmAckStatusPacket) == 20,
+              "RELAYED_ROVER_RTCM_ACK_STATUS must be 20 bytes");
 static_assert(sizeof(GnssCommandRequestPacket) == 44,
               "GNSS_COMMAND_REQUEST must be 44 bytes");
 static_assert(sizeof(GnssCommandResultPacket) == 24,
@@ -182,6 +200,9 @@ bool validateRoverEcefStatus(const RoverEcefStatusPacket& packet,
                              std::size_t receivedLength);
 bool validateRelayedRoverEcefStatus(const RelayedRoverEcefStatusPacket& packet,
                                     std::size_t receivedLength);
+bool validateRelayedRoverRtcmAckStatus(
+    const RelayedRoverRtcmAckStatusPacket& packet,
+    std::size_t receivedLength);
 bool validateGnssCommandRequest(const GnssCommandRequestPacket& packet,
                                 std::size_t receivedLength,
                                 uint32_t expectedNetworkId,

@@ -44,6 +44,7 @@ RelayChildStatus childPeers[RELAY_MAX_CHILDREN] = {};
 RelayChildLlhSlot childLlhSlots[RELAY_MAX_CHILDREN] = {};
 size_t childCount = 0;
 size_t llhRoundRobinIndex = 0;
+size_t ackStatusRoundRobinIndex = 0;
 RelayStats stats{};
 portMUX_TYPE statsMux = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE relayMux = portMUX_INITIALIZER_UNLOCKED;
@@ -614,14 +615,19 @@ bool sendFrameToChild(const RelayFrame& relayFrame,
                 portENTER_CRITICAL(&relayMux);
                 waitingForAck = false;
                 portEXIT_CRITICAL(&relayMux);
+                const uint32_t ackAtMs = millis();
                 portENTER_CRITICAL(&statsMux);
                 ++stats.framesAcked;
-                stats.lastAckMillis = millis();
+                stats.lastAckMillis = ackAtMs;
                 portEXIT_CRITICAL(&statsMux);
                 portENTER_CRITICAL(&relayMux);
                 if (childIndex < childCount) {
                     ++childPeers[childIndex].framesAcked;
-                    childPeers[childIndex].lastAckMillis = millis();
+                    childPeers[childIndex].lastAckMillis = ackAtMs;
+                    childPeers[childIndex].pendingAckStreamId = ack.streamId;
+                    childPeers[childIndex].pendingAckFrameSequence =
+                        ack.frameSequence;
+                    childPeers[childIndex].ackStatusPending = true;
                 }
                 portEXIT_CRITICAL(&relayMux);
                 recordChildFrameOutcome(childIndex, true);
@@ -902,6 +908,97 @@ bool relayProcessNextFrame(TickType_t waitTicks) {
         }
     }
     return sent;
+}
+
+bool relayProcessNextAckStatus() {
+    if (!ROVER_RELAY_MODE || !relayReady || isChildPairingActive()) {
+        return false;
+    }
+
+    const uint32_t now = millis();
+    size_t selectedIndex = RELAY_MAX_CHILDREN;
+    uint8_t childMac[6] = {};
+    uint16_t streamId = 0;
+    uint32_t frameSequence = 0;
+    uint32_t ackAtMs = 0;
+    portENTER_CRITICAL(&relayMux);
+    for (size_t offset = 0; offset < childCount; ++offset) {
+        const size_t index = (ackStatusRoundRobinIndex + offset) % childCount;
+        const RelayChildStatus& child = childPeers[index];
+        if (child.ackStatusPending &&
+            (child.lastAckStatusSentMillis == 0 ||
+             now - child.lastAckStatusSentMillis >=
+                 RELAY_CHILD_ACK_STATUS_INTERVAL_MS)) {
+            selectedIndex = index;
+            std::memcpy(childMac, child.mac, sizeof(childMac));
+            streamId = child.pendingAckStreamId;
+            frameSequence = child.pendingAckFrameSequence;
+            ackAtMs = child.lastAckMillis;
+            ackStatusRoundRobinIndex = (index + 1) % childCount;
+            break;
+        }
+    }
+    portEXIT_CRITICAL(&relayMux);
+    if (selectedIndex >= RELAY_MAX_CHILDREN) {
+        return false;
+    }
+
+    uint8_t baseMac[6] = {};
+    if (!espnowGetBaseMac(baseMac)) {
+        incrementStat(&RelayStats::childAckStatusFailures);
+        return false;
+    }
+
+    rtcm_espnow::RelayedRoverRtcmAckStatusPacket packet{};
+    packet.common.magic = rtcm_espnow::MAGIC;
+    packet.common.version = rtcm_espnow::VERSION;
+    packet.common.packetType =
+        rtcm_espnow::PACKET_TYPE_RELAYED_ROVER_RTCM_ACK_STATUS;
+    std::memcpy(packet.roverMac, childMac, sizeof(packet.roverMac));
+    packet.streamId = streamId;
+    packet.frameSequence = frameSequence;
+    packet.ackAgeMs = now - ackAtMs;
+    if (!rtcm_espnow::validateRelayedRoverRtcmAckStatus(packet,
+                                                        sizeof(packet))) {
+        incrementStat(&RelayStats::childAckStatusFailures);
+        return false;
+    }
+
+    const EspNowTxResult result = espnowTxTrySend(
+        baseMac,
+        reinterpret_cast<const uint8_t*>(&packet),
+        sizeof(packet));
+    if (result == EspNowTxResult::Busy) {
+        incrementStat(&RelayStats::childAckStatusBusy);
+        return false;
+    }
+    if (result != EspNowTxResult::Success) {
+        incrementStat(&RelayStats::childAckStatusFailures);
+        Serial.printf("[RELAY][ACK-STATUS][WARN] child=%s seq=%lu result=%s\n",
+                      macToString(childMac).c_str(),
+                      static_cast<unsigned long>(frameSequence),
+                      espnowTxResultToString(result));
+        return false;
+    }
+
+    portENTER_CRITICAL(&relayMux);
+    if (selectedIndex < childCount &&
+        std::memcmp(childPeers[selectedIndex].mac, childMac, 6) == 0) {
+        RelayChildStatus& child = childPeers[selectedIndex];
+        child.lastAckStatusSentMillis = millis();
+        if (child.pendingAckStreamId == streamId &&
+            child.pendingAckFrameSequence == frameSequence) {
+            child.ackStatusPending = false;
+        }
+    }
+    portEXIT_CRITICAL(&relayMux);
+    incrementStat(&RelayStats::childAckStatusForwarded);
+    Serial.printf("[RELAY][ACK-STATUS] Forwarded child=%s stream=%u seq=%lu age_ms=%lu\n",
+                  macToString(childMac).c_str(),
+                  static_cast<unsigned>(streamId),
+                  static_cast<unsigned long>(frameSequence),
+                  static_cast<unsigned long>(packet.ackAgeMs));
+    return true;
 }
 
 bool relayProcessNextLlh(TickType_t waitTicks) {

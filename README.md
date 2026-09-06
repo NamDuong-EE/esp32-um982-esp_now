@@ -32,7 +32,7 @@ Base repo riêng ── ESP-NOW Long Range ──> ESP32U Rover ── UART ─�
 - [x] Thêm pairing downstream; Relay đóng vai trò Base đối với Rover con và lưu danh sách `child0`...`child4` riêng trong NVS.
 - [x] Tách ACK thành hai liên kết độc lập `Base ↔ Relay` và `Relay ↔ Rover con`, có timeout/retry/health riêng.
 - [x] Tách debug web Normal mode và Relay mode; Relay web hiển thị riêng upstream, downstream và relay queue.
-- [ ] Provision PMK/LMK và bật `ESPNOW_ENCRYPTION_ENABLED` khi triển khai bảo mật.
+- [x] Provision PMK/LMK bằng file local bị Git ignore và bật `ESPNOW_ENCRYPTION_ENABLED` cho runtime unicast.
 - [ ] Kiểm thử end-to-end với Base repo riêng + ESP32U Rover + UM980/982.
 - [ ] Kiểm thử phần cứng topology `Base → Relay Rover → Child Rover`, gồm pairing, reset nguồn, retry và mất liên kết downstream.
 - [x] Telemetry ngược `Rover → Relay/Base`: đổi GGA sang ECEF, gửi 1 Hz và chỉ giữ snapshot mới nhất trong RAM.
@@ -67,7 +67,7 @@ Nguyên tắc hiện tại:
 
 1. Wire protocol là version `2`; Base, Relay và mọi Rover phải được nạp đồng bộ.
 2. ECEF X/Y/Z dùng `int64_t` scale `10000`, tương ứng `0,0001 m`; log và lệnh `MODE BASE X Y Z` in bốn chữ số sau dấu phẩy.
-3. Type `6` mang sequence, GNSS milliseconds-of-day, `correctionStreamId`, `fixQuality` và ECEF. Type `7` giữ nguyên dữ liệu rồi thêm MAC Rover con.
+3. Type `6` mang sequence, GNSS milliseconds-of-day, `correctionStreamId`, `fixQuality` và ECEF. Type `7` giữ nguyên dữ liệu rồi thêm MAC Rover con. Type `12` mang MAC Rover con, `streamId`, `frameSequence` và tuổi ACK downstream để Base xác định child online.
 4. `correctionStreamId` là stream RTCM gần nhất Rover đã ghép/ghi hoàn tất. Base dùng stream cùng GNSS time để không cộng correction sai epoch.
 5. Rover gửi tối đa một snapshot mỗi giây. Telemetry có ưu tiên thấp hơn pairing và RTCM ACK; khi TX bận có thể bỏ snapshot hiện tại, không retry backlog.
 6. Relay có một slot latest-only cho mỗi child và forward round-robin. NVS chỉ lưu MAC pairing, không lưu lịch sử ECEF.
@@ -129,6 +129,7 @@ Quy tắc hoạt động:
 8. Base, Relay và Rover con phải dùng cùng `ESPNOW_WIFI_CHANNEL` và cùng cấu hình LR PHY.
 9. Khi mở pairing downstream, Relay dừng gửi RTCM, xóa các frame downstream cũ và chỉ dành TX cho pairing. Frame RTCM mới nhận trong cửa sổ này vẫn được ghi vào UART local nhưng không được đưa vào queue rover con.
 10. Sau hai frame lỗi liên tiếp, riêng Rover con đó được đưa vào cooldown 3 giây. Relay tiếp tục gửi tới các Rover còn hoạt động để một thiết bị mất sóng không chặn toàn bộ danh sách.
+11. Khi nhận application ACK hợp lệ từ Rover con, Relay giữ snapshot mới nhất và gửi `RELAYED_ROVER_RTCM_ACK_STATUS` lên Base tối đa một lần mỗi child mỗi 5 giây. TX bận/lỗi không xóa snapshot; ECEF type `7` không được dùng thay bằng chứng ACK RTCM.
 
 Pairing dùng chung nút vật lý nhưng không mở hai state machine đồng thời:
 
@@ -380,7 +381,7 @@ Action `switch_to_rover` ghi 4 bước để hoàn nguyên:
 
 Sau khi ghi thành công, Rover hạ cờ `promoted_to_base`, mở lại parser NMEA/ECEF và trả result `4/4`; Base nhận result rồi bật lại gửi RTCM. Cú pháp này yêu cầu UM980 Build7923+ hoặc UM982 Build7650+ theo Commands Manual N4 của Unicore.
 
-Giới hạn V1: `uart_sequence_written` chỉ xác nhận ESP32 đã ghi đủ byte xuống UART, chưa parse phản hồi `OK/ERROR` của UM980. Việc xác nhận temp source sẵn sàng do Base gốc thực hiện từ tập RTCM nhận được. Trạng thái đổi vai trò chỉ nằm trong RAM; reset ESP32 sẽ trở về Rover. Firmware không dùng `FRESET`.
+Kết quả `verified` chỉ được trả sau khi từng lệnh nhận phản hồi `OK`, `SAVECONFIG` nhận `OK`, UM980/UM982 được `RESET` có kiểm soát, lệnh đọc `MODE` khớp vai trò đã lưu và có GGA mới. Khi chuyển về Rover, GGA phải rời quality `7`; khi chuyển thành Temporary Base, GGA phải có quality `7`. Trong thời gian xác minh firmware tạm dừng nhận correction, publish trạng thái Rover và uplink Temporary Base để tránh báo trạng thái trung gian.
 
 ### Debug web SoftAP tùy chọn
 
@@ -577,6 +578,12 @@ Mở `include/Prog_Config.h` và kiểm tra:
 5. MAC Base không còn cấu hình hard-code. Rover đọc MAC Base từ NVS/Preferences sau pairing. Nếu chưa pair, ESP-NOW vẫn khởi động để chờ pairing nhưng RTCM runtime unicast chưa hoạt động.
 6. Chọn `esp32u_rover_espnow` cho Rover thường/Rover con hoặc `esp32u_rover_relay` cho Rover trung gian.
 
+### Khóa ESP-NOW
+
+Không đặt PMK/LMK trong `Prog_Config.h`. Từ project Base, chạy `tools/Provision-EspNowSecurity.ps1`; script dùng CSPRNG để tạo `include/EspNow_Secrets.h` giống nhau cho Base và Rover, bật `ESPNOW_SECURITY_ENABLED=1`, và file thật bị Git ignore. Sau mỗi lần provision/rotate phải build và nạp lại toàn bộ Base, Rover thường và Rover Relay bằng cùng bộ khóa. Build sẽ dừng nếu khóa thiếu hoặc không hợp lệ.
+
+Runtime unicast dùng ESP-NOW CCMP. Broadcast discovery và peer tạm của handshake pairing không mã hóa; chỉ mở pairing bằng nút vật lý trong thời gian cấu hình.
+
 ### PlatformIO CLI
 
 ```powershell
@@ -721,7 +728,7 @@ Kiểm tra thêm với Relay mode:
 10. [ ] Kiểm thử pairing 1 Base - 1 Rover trên phần cứng, reset nguồn hai bên và xác nhận normal mode tự dùng MAC đã lưu.
 11. [ ] Kiểm thử pair lần lượt 1 Base - nhiều Rover; Base hiện hỗ trợ lưu tối đa 5 Rover và gửi RTCM multi-unicast.
 12. [x] Nâng runtime protocol lên v2 cho telemetry ECEF và command reset đồng bộ.
-12. [ ] Provision PMK/LMK và bật `ESPNOW_ENCRYPTION_ENABLED` khi triển khai bảo mật.
+12. [x] Provision PMK/LMK bằng CSPRNG, đồng bộ Base/Rover/Relay và bật `ESPNOW_ENCRYPTION_ENABLED`.
 13. [ ] Kiểm thử end-to-end Base repo riêng → ESP32U Rover → UM980/982.
 14. [ ] Đo tầm xa LR 250 Kbps, sau đó thử LR 500 Kbps nếu cần.
 15. [x] Thêm build environment `esp32u_rover_relay` và operating mode compile-time.

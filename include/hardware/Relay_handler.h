@@ -18,8 +18,12 @@ struct RelayChildStatus {
     uint32_t llhForwardSkipped = 0;
     uint32_t llhForwardFailures = 0;
     uint32_t lastAckMillis = 0;
+    uint16_t pendingAckStreamId = 0;
+    uint32_t pendingAckFrameSequence = 0;
+    uint32_t lastAckStatusSentMillis = 0;
     uint32_t cooldownUntilMs = 0;
     uint8_t consecutiveFailures = 0;
+    bool ackStatusPending = false;
     bool stored = false;
 };
 
@@ -50,6 +54,9 @@ struct RelayStats {
     uint32_t childLlhForwarded;
     uint32_t childLlhForwardSkipped;
     uint32_t childLlhForwardFailures;
+    uint32_t childAckStatusForwarded;
+    uint32_t childAckStatusBusy;
+    uint32_t childAckStatusFailures;
     uint32_t childCount;
     uint32_t childClearEvents;
     uint32_t framesSkippedCooldown;
@@ -67,6 +74,7 @@ bool relayQueueFrame(const uint8_t* frame,
                      uint16_t streamId,
                      uint32_t frameSequence);
 bool relayProcessNextFrame(TickType_t waitTicks);
+bool relayProcessNextAckStatus();
 bool relayProcessNextLlh(TickType_t waitTicks);
 bool relayHandleReceivedPacket(const uint8_t* sourceMac,
                                const uint8_t* data,

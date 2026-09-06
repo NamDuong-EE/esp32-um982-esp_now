@@ -103,6 +103,23 @@ bool validateRelayedRoverEcefStatus(const RelayedRoverEcefStatusPacket& packet,
            packet.fixQuality <= 8;
 }
 
+bool validateRelayedRoverRtcmAckStatus(
+    const RelayedRoverRtcmAckStatusPacket& packet,
+    std::size_t receivedLength) {
+    bool macConfigured = false;
+    bool macBroadcast = true;
+    for (uint8_t octet : packet.roverMac) {
+        macConfigured = macConfigured || octet != 0;
+        macBroadcast = macBroadcast && octet == 0xFF;
+    }
+    return receivedLength == sizeof(RelayedRoverRtcmAckStatusPacket) &&
+           packet.common.magic == MAGIC &&
+           packet.common.version == VERSION &&
+           packet.common.packetType ==
+               PACKET_TYPE_RELAYED_ROVER_RTCM_ACK_STATUS &&
+           macConfigured && !macBroadcast && (packet.roverMac[0] & 0x01U) == 0;
+}
+
 bool validateGnssCommandRequest(const GnssCommandRequestPacket& packet,
                                 std::size_t receivedLength,
                                 uint32_t expectedNetworkId,

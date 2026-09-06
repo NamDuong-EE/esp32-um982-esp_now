@@ -778,9 +778,10 @@ bool espnowSetup() {
     }
 
     ready = true;
-    Serial.printf("[ESP-NOW] Ready, STA channel=%u, TX rate=%s, peer=%s\n",
+    Serial.printf("[ESP-NOW] Ready, STA channel=%u, TX rate=%s, security=%s, peer=%s\n",
                   getWiFiChannel(),
                   espNowTxRateToText(),
+                  ESPNOW_ENCRYPTION_ENABLED ? "CCMP" : "plaintext",
                   hasActiveBaseMac ? macToString(activeBaseMac).c_str() : "<none>");
     return true;
 }

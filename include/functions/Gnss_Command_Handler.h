@@ -12,10 +12,16 @@ struct GnssCommandStats {
     uint32_t duplicateRequests = 0;
     uint32_t sequencesCompleted = 0;
     uint32_t uartWriteFailures = 0;
+    uint32_t responseTimeouts = 0;
+    uint32_t responseRejected = 0;
+    uint32_t modeVerifyFailures = 0;
+    uint32_t ggaVerifyFailures = 0;
+    uint32_t persistenceVerifyFailures = 0;
     uint32_t resultsSent = 0;
     uint32_t resultSendFailures = 0;
     bool promotedToBase = false;
     bool rtkCorrectionHeld = false;
+    bool roleTransitionActive = false;
 };
 
 bool gnssCommandSetup();
@@ -23,8 +29,10 @@ bool gnssCommandHandleRequest(const uint8_t* sourceMac,
                               const uint8_t* data,
                               int length);
 void gnssCommandTask(void* parameter);
+void gnssCommandObserveLine(const char* data, std::size_t length);
 bool gnssCommandAcceptsRtcmCorrection();
 bool gnssCommandPublishesRoverStatus();
+bool gnssCommandRoutesGnssToTemporaryBase();
 GnssCommandStats gnssCommandGetStats();
 
 #endif // GNSS_COMMAND_HANDLER_H

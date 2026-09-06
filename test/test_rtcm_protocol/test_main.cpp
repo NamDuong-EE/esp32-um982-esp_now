@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "protocol/RtcmEspNowProtocol.h"
+#include "functions/Gnss_Command_Verifier.h"
 
 using namespace rtcm_espnow;
 
@@ -100,6 +101,31 @@ void test_relayed_rover_ecef_status_validation() {
     std::memcpy(status.roverMac, roverMac, sizeof(roverMac));
     status.fixQuality = 9;
     TEST_ASSERT_FALSE(validateRelayedRoverEcefStatus(status, sizeof(status)));
+}
+
+void test_relayed_rover_rtcm_ack_status_validation() {
+    RelayedRoverRtcmAckStatusPacket status{};
+    status.common.magic = MAGIC;
+    status.common.version = VERSION;
+    status.common.packetType = PACKET_TYPE_RELAYED_ROVER_RTCM_ACK_STATUS;
+    const uint8_t roverMac[6] = {0x58, 0x2A, 0xBD, 0x71, 0xE4, 0xF0};
+    std::memcpy(status.roverMac, roverMac, sizeof(roverMac));
+    status.streamId = 12;
+    status.frameSequence = 345;
+    status.ackAgeMs = 87;
+
+    TEST_ASSERT_EQUAL_UINT32(20, sizeof(RelayedRoverRtcmAckStatusPacket));
+    TEST_ASSERT_TRUE(validateRelayedRoverRtcmAckStatus(status, sizeof(status)));
+    TEST_ASSERT_FALSE(validateRelayedRoverRtcmAckStatus(status,
+                                                        sizeof(status) - 1));
+    std::memset(status.roverMac, 0, sizeof(status.roverMac));
+    TEST_ASSERT_FALSE(validateRelayedRoverRtcmAckStatus(status, sizeof(status)));
+    std::memcpy(status.roverMac, roverMac, sizeof(roverMac));
+    status.roverMac[0] |= 0x01U;
+    TEST_ASSERT_FALSE(validateRelayedRoverRtcmAckStatus(status, sizeof(status)));
+    std::memcpy(status.roverMac, roverMac, sizeof(roverMac));
+    status.common.packetType = PACKET_TYPE_FRAME_ACK;
+    TEST_ASSERT_FALSE(validateRelayedRoverRtcmAckStatus(status, sizeof(status)));
 }
 
 void test_pairing_packet_validation() {
@@ -255,6 +281,45 @@ void test_rtcm_crc_validation() {
     TEST_ASSERT_FALSE(validateRtcm3Frame(frame.data(), frame.size()));
 }
 
+void test_gnss_command_response_parser() {
+    const char ok[] = "Command, SAVECONFIG, response: OK\r\n";
+    GnssLineObservation observation =
+        parseGnssCommandObservation(ok, sizeof(ok) - 1);
+    TEST_ASSERT_TRUE(observation.responseOk);
+    TEST_ASSERT_FALSE(observation.responseError);
+
+    const char error[] = "Command, MODE ROVER SURVEY, response: ERROR\r\n";
+    observation = parseGnssCommandObservation(error, sizeof(error) - 1);
+    TEST_ASSERT_FALSE(observation.responseOk);
+    TEST_ASSERT_TRUE(observation.responseError);
+}
+
+void test_gnss_mode_and_gga_parser() {
+    const char roverMode[] =
+        "#MODE,81,GPS,FINE,2209,123.0;MODE ROVER SURVEY,*1B\r\n";
+    GnssLineObservation observation =
+        parseGnssCommandObservation(roverMode, sizeof(roverMode) - 1);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(GnssObservedMode::Rover),
+                            static_cast<uint8_t>(observation.mode));
+
+    const char baseMode[] = "noise;MODE BASE -1.0 2.0 3.0,*00\r\n";
+    observation = parseGnssCommandObservation(baseMode, sizeof(baseMode) - 1);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(GnssObservedMode::Base),
+                            static_cast<uint8_t>(observation.mode));
+
+    const char baseGga[] =
+        "$GNGGA,045151.00,2104.44,N,10546.62,E,7,28,0.7,22.4,M,0,M,,*00\r\n";
+    observation = parseGnssCommandObservation(baseGga, sizeof(baseGga) - 1);
+    TEST_ASSERT_TRUE(observation.hasGga);
+    TEST_ASSERT_EQUAL_UINT8(7, observation.ggaQuality);
+
+    const char roverGga[] =
+        "binary$GPGGA,045152.00,2104.44,N,10546.62,E,5,28,0.7,22.4,M,0,M,,*00\r\n";
+    observation = parseGnssCommandObservation(roverGga, sizeof(roverGga) - 1);
+    TEST_ASSERT_TRUE(observation.hasGga);
+    TEST_ASSERT_EQUAL_UINT8(5, observation.ggaQuality);
+}
+
 void runTests() {
     UNITY_BEGIN();
     RUN_TEST(test_header_and_fragment_boundaries);
@@ -262,9 +327,12 @@ void runTests() {
     RUN_TEST(test_frame_ack_validation);
     RUN_TEST(test_rover_ecef_status_validation);
     RUN_TEST(test_relayed_rover_ecef_status_validation);
+    RUN_TEST(test_relayed_rover_rtcm_ack_status_validation);
     RUN_TEST(test_pairing_packet_validation);
     RUN_TEST(test_gnss_command_packet_validation);
     RUN_TEST(test_rtcm_crc_validation);
+    RUN_TEST(test_gnss_command_response_parser);
+    RUN_TEST(test_gnss_mode_and_gga_parser);
     UNITY_END();
 }
 

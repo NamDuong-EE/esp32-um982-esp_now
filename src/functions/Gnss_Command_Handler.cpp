@@ -1,4 +1,5 @@
 #include "functions/Gnss_Command_Handler.h"
+#include "functions/Gnss_Command_Verifier.h"
 
 #include <cstring>
 #include <freertos/queue.h>
@@ -33,6 +34,17 @@ bool haveLastResult = false;
 uint8_t lastResultMac[6] = {};
 rtcm_espnow::GnssCommandResultPacket lastResult{};
 
+struct ObservationState {
+    uint32_t okGeneration = 0;
+    uint32_t errorGeneration = 0;
+    uint32_t modeGeneration = 0;
+    uint32_t ggaGeneration = 0;
+    GnssObservedMode mode = GnssObservedMode::Unknown;
+    uint8_t ggaQuality = 0;
+};
+
+ObservationState observations{};
+
 void incrementStat(uint32_t GnssCommandStats::*member)
 {
     portENTER_CRITICAL(&statsMux);
@@ -53,6 +65,21 @@ void setRtkCorrectionHeld(bool held)
     portENTER_CRITICAL(&statsMux);
     stats.rtkCorrectionHeld = held;
     portEXIT_CRITICAL(&statsMux);
+}
+
+void setRoleTransitionActive(bool active)
+{
+    portENTER_CRITICAL(&statsMux);
+    stats.roleTransitionActive = active;
+    portEXIT_CRITICAL(&statsMux);
+}
+
+ObservationState getObservations()
+{
+    portENTER_CRITICAL(&statsMux);
+    const ObservationState copy = observations;
+    portEXIT_CRITICAL(&statsMux);
+    return copy;
 }
 
 bool macEquals(const uint8_t* left, const uint8_t* right)
@@ -103,27 +130,36 @@ bool writeCommand(const char* command)
     return written == length;
 }
 
+bool writeCommandAndWaitResponse(const char* command,
+                                 rtcm_espnow::GnssCommandResultPacket& result);
+bool verifyPersistedRole(bool promotedToBase,
+                         rtcm_espnow::GnssCommandResultPacket& result);
+
 bool executeCommandSteps(const QueuedGnssCommand& queued,
                          rtcm_espnow::GnssCommandResultPacket& result,
                          const CommandStep* steps,
                          uint8_t stepCount,
+                         bool roleChange,
                          bool promotedToBase)
 {
     result.totalSteps = stepCount;
+    if (roleChange) {
+        setRoleTransitionActive(true);
+    }
     if (gnssTxMutex == nullptr ||
         xSemaphoreTake(gnssTxMutex,
                        pdMS_TO_TICKS(GNSS_COMMAND_UART_LOCK_TIMEOUT_MS)) != pdTRUE) {
         result.status = rtcm_espnow::GNSS_COMMAND_STATUS_BUSY;
         result.detailCode = rtcm_espnow::GNSS_COMMAND_DETAIL_UART_WRITE;
+        if (roleChange) {
+            setRoleTransitionActive(false);
+        }
         return false;
     }
 
     bool succeeded = true;
     for (uint8_t index = 0; index < stepCount; ++index) {
-        if (!writeCommand(steps[index].command)) {
-            result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
-            result.detailCode = rtcm_espnow::GNSS_COMMAND_DETAIL_UART_WRITE;
-            incrementStat(&GnssCommandStats::uartWriteFailures);
+        if (!writeCommandAndWaitResponse(steps[index].command, result)) {
             succeeded = false;
             break;
         }
@@ -137,13 +173,21 @@ bool executeCommandSteps(const QueuedGnssCommand& queued,
             vTaskDelay(pdMS_TO_TICKS(steps[index].delayAfterMs));
         }
     }
+    if (succeeded && roleChange) {
+        succeeded = verifyPersistedRole(promotedToBase, result);
+    }
     if (succeeded) {
-        setPromotedToBase(promotedToBase);
-        result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_SEQUENCE_WRITTEN;
+        if (roleChange) {
+            setPromotedToBase(promotedToBase);
+        }
+        result.status = rtcm_espnow::GNSS_COMMAND_STATUS_VERIFIED;
         result.detailCode = rtcm_espnow::GNSS_COMMAND_DETAIL_NONE;
         incrementStat(&GnssCommandStats::sequencesCompleted);
     }
     xSemaphoreGive(gnssTxMutex);
+    if (roleChange) {
+        setRoleTransitionActive(false);
+    }
     return succeeded;
 }
 
@@ -177,11 +221,141 @@ bool executeBaseFixedEcefSequence(const QueuedGnssCommand& queued,
         {"saveconfig\r\n", 0},
     };
     const bool succeeded =
-        executeCommandSteps(queued, result, steps, BASE_COMMAND_STEPS, true);
+        executeCommandSteps(queued, result, steps, BASE_COMMAND_STEPS, true, true);
     if (succeeded) {
         setRtkCorrectionHeld(false);
     }
     return succeeded;
+}
+
+bool waitForCommandResponse(const ObservationState& before,
+                            rtcm_espnow::GnssCommandResultPacket& result)
+{
+    const uint32_t startedAt = millis();
+    while (millis() - startedAt < GNSS_COMMAND_RESPONSE_TIMEOUT_MS) {
+        const ObservationState current = getObservations();
+        if (current.errorGeneration != before.errorGeneration) {
+            result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
+            result.detailCode = rtcm_espnow::GNSS_COMMAND_DETAIL_RESPONSE_REJECTED;
+            incrementStat(&GnssCommandStats::responseRejected);
+            return false;
+        }
+        if (current.okGeneration != before.okGeneration) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
+    result.detailCode = rtcm_espnow::GNSS_COMMAND_DETAIL_RESPONSE_TIMEOUT;
+    incrementStat(&GnssCommandStats::responseTimeouts);
+    return false;
+}
+
+bool writeCommandAndWaitResponse(const char* command,
+                                 rtcm_espnow::GnssCommandResultPacket& result)
+{
+    const ObservationState before = getObservations();
+    if (!writeCommand(command)) {
+        result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
+        result.detailCode = rtcm_espnow::GNSS_COMMAND_DETAIL_UART_WRITE;
+        incrementStat(&GnssCommandStats::uartWriteFailures);
+        return false;
+    }
+    return waitForCommandResponse(before, result);
+}
+
+bool waitForModeQuery(const ObservationState& before,
+                      GnssObservedMode expectedMode)
+{
+    const uint32_t startedAt = millis();
+    while (millis() - startedAt < GNSS_COMMAND_RESPONSE_TIMEOUT_MS) {
+        const ObservationState current = getObservations();
+        if (current.errorGeneration != before.errorGeneration) {
+            return false;
+        }
+        if (current.modeGeneration != before.modeGeneration &&
+            current.mode == expectedMode) {
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return false;
+}
+
+bool verifyPersistedRole(bool promotedToBase,
+                         rtcm_espnow::GnssCommandResultPacket& result)
+{
+    const GnssObservedMode expectedMode = promotedToBase
+                                              ? GnssObservedMode::Base
+                                              : GnssObservedMode::Rover;
+    const ObservationState beforeReset = getObservations();
+    vTaskDelay(pdMS_TO_TICKS(GNSS_COMMAND_SAVECONFIG_SETTLE_MS));
+    if (!writeCommand("reset\r\n")) {
+        result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
+        result.detailCode = rtcm_espnow::GNSS_COMMAND_DETAIL_UART_WRITE;
+        incrementStat(&GnssCommandStats::uartWriteFailures);
+        return false;
+    }
+    Serial.println("[ROVER][GNSS_CMD][VERIFY] RESET sent; checking NVM role");
+
+    bool modeVerified = false;
+    const uint32_t resetAt = millis();
+    while (millis() - resetAt < GNSS_COMMAND_RESET_BOOT_TIMEOUT_MS) {
+        vTaskDelay(pdMS_TO_TICKS(GNSS_COMMAND_MODE_QUERY_INTERVAL_MS));
+        const ObservationState beforeQuery = getObservations();
+        if (writeCommand("mode\r\n") &&
+            waitForModeQuery(beforeQuery, expectedMode)) {
+            modeVerified = true;
+            break;
+        }
+    }
+    if (!modeVerified) {
+        const ObservationState current = getObservations();
+        const bool receivedMode =
+            current.modeGeneration != beforeReset.modeGeneration &&
+            current.mode != GnssObservedMode::Unknown;
+        if (receivedMode) {
+            setPromotedToBase(current.mode == GnssObservedMode::Base);
+            Serial.printf("[ROVER][GNSS_CMD][VERIFY][WARN] actual_mode=%s expected=%s\n",
+                          current.mode == GnssObservedMode::Base ? "base" : "rover",
+                          promotedToBase ? "base" : "rover");
+        }
+        result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
+        result.detailCode = receivedMode
+                                ? rtcm_espnow::GNSS_COMMAND_DETAIL_PERSISTENCE_VERIFY
+                                : rtcm_espnow::GNSS_COMMAND_DETAIL_MODE_VERIFY;
+        incrementStat(&GnssCommandStats::modeVerifyFailures);
+        if (receivedMode) {
+            incrementStat(&GnssCommandStats::persistenceVerifyFailures);
+        }
+        return false;
+    }
+
+    // MODE readback is the authoritative role after RESET. Keep software
+    // routing aligned with the receiver even if the following GGA check fails.
+    setPromotedToBase(promotedToBase);
+
+    const uint32_t ggaWaitAt = millis();
+    while (millis() - ggaWaitAt < GNSS_COMMAND_GGA_VERIFY_TIMEOUT_MS) {
+        const ObservationState current = getObservations();
+        if (current.ggaGeneration != beforeReset.ggaGeneration) {
+            const bool qualityMatches = promotedToBase
+                                            ? current.ggaQuality == 7
+                                            : current.ggaQuality != 7;
+            if (qualityMatches) {
+                Serial.printf(
+                    "[ROVER][GNSS_CMD][VERIFY] persisted_mode=%s gga_quality=%u\n",
+                    promotedToBase ? "base" : "rover",
+                    current.ggaQuality);
+                return true;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    result.status = rtcm_espnow::GNSS_COMMAND_STATUS_UART_ERROR;
+    result.detailCode = rtcm_espnow::GNSS_COMMAND_DETAIL_GGA_VERIFY;
+    incrementStat(&GnssCommandStats::ggaVerifyFailures);
+    return false;
 }
 
 bool executeRoverSequence(const QueuedGnssCommand& queued,
@@ -194,7 +368,7 @@ bool executeRoverSequence(const QueuedGnssCommand& queued,
         {"saveconfig\r\n", 0},
     };
     const bool succeeded =
-        executeCommandSteps(queued, result, steps, ROVER_COMMAND_STEPS, false);
+        executeCommandSteps(queued, result, steps, ROVER_COMMAND_STEPS, true, false);
     if (succeeded) {
         setRtkCorrectionHeld(false);
     }
@@ -210,7 +384,7 @@ bool executeRtkResetSequence(const QueuedGnssCommand& queued,
         {"config rtk disable\r\n", GNSS_COMMAND_OUTPUT_DELAY_MS},
     };
     const bool localReset =
-        executeCommandSteps(queued, result, steps, 1, false);
+        executeCommandSteps(queued, result, steps, 1, false, false);
     if (!localReset) {
         setRtkCorrectionHeld(false);
     }
@@ -233,7 +407,7 @@ bool executeRtkResumeSequence(const QueuedGnssCommand& queued,
         {"config rtk user_defaults\r\n", GNSS_COMMAND_OUTPUT_DELAY_MS},
     };
     const bool localResume =
-        executeCommandSteps(queued, result, steps, 1, false);
+        executeCommandSteps(queued, result, steps, 1, false, false);
     if (localResume) {
         setRtkCorrectionHeld(false);
     }
@@ -356,11 +530,38 @@ void gnssCommandTask(void* parameter)
     }
 }
 
+void gnssCommandObserveLine(const char* data, std::size_t length)
+{
+    const GnssLineObservation observation =
+        parseGnssCommandObservation(data, length);
+    if (!observation.responseOk && !observation.responseError &&
+        observation.mode == GnssObservedMode::Unknown && !observation.hasGga) {
+        return;
+    }
+    portENTER_CRITICAL(&statsMux);
+    if (observation.responseOk) {
+        ++observations.okGeneration;
+    }
+    if (observation.responseError) {
+        ++observations.errorGeneration;
+    }
+    if (observation.mode != GnssObservedMode::Unknown) {
+        ++observations.modeGeneration;
+        observations.mode = observation.mode;
+    }
+    if (observation.hasGga) {
+        ++observations.ggaGeneration;
+        observations.ggaQuality = observation.ggaQuality;
+    }
+    portEXIT_CRITICAL(&statsMux);
+}
+
 bool gnssCommandAcceptsRtcmCorrection()
 {
     portENTER_CRITICAL(&statsMux);
     const bool accepts = !stats.promotedToBase &&
-                         !stats.rtkCorrectionHeld;
+                         !stats.rtkCorrectionHeld &&
+                         !stats.roleTransitionActive;
     portEXIT_CRITICAL(&statsMux);
     return accepts;
 }
@@ -368,9 +569,19 @@ bool gnssCommandAcceptsRtcmCorrection()
 bool gnssCommandPublishesRoverStatus()
 {
     portENTER_CRITICAL(&statsMux);
-    const bool publishes = !stats.promotedToBase;
+    const bool publishes = !stats.promotedToBase &&
+                           !stats.roleTransitionActive;
     portEXIT_CRITICAL(&statsMux);
     return publishes;
+}
+
+bool gnssCommandRoutesGnssToTemporaryBase()
+{
+    portENTER_CRITICAL(&statsMux);
+    const bool routes = stats.promotedToBase &&
+                        !stats.roleTransitionActive;
+    portEXIT_CRITICAL(&statsMux);
+    return routes;
 }
 
 GnssCommandStats gnssCommandGetStats()
